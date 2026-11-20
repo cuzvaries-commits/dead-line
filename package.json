@@ -1,0 +1,13 @@
+{
+  "name": "dead-line",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "esbuild src3d/game.js --bundle --outfile=web/game.js --servedir=web --serve=8000",
+    "build": "node src3d/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.20.2",
+    "three": "0.160.1"
+  }
+}

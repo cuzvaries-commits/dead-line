@@ -1,0 +1,8 @@
+node_modules/
+web/game.js
+dead-line.zip
+# old prototypes, superseded by src3d/game.js
+/index.html
+/dead-line-3d.html
+/dead-line-fps.html
+src3d/game-thirdperson.js
