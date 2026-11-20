@@ -11,15 +11,16 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 
 // ================= CONFIG =================
 const W = 480, H = 270, STEP = 1 / 60;          // HUD canvas size, fixed sim step
-const WORLD_L = 40, Z_MIN = -3, Z_MAX = 2.6, Z_WALL = -4, U = .04; // U: pose unit in meters (a body is ~46U tall)
-const ROAD_X0 = -10, ROAD_LEN = WORLD_L + 20, ROAD_Z0 = -4, ROAD_D = 7.6, DW = 1536, DH = 192;
+const WORLD_L = 120, Z_MIN = -10.2, Z_MAX = 10.2, Z_WALL = -11, U = .04; // U: pose unit in meters (a body is ~46U tall)
+const ROAD_X0 = -10, ROAD_LEN = WORLD_L + 20, ROAD_Z0 = -11, ROAD_D = 22, DW = 2048, DH = 320;
 const CAM = { y: 1.9, z: 2.6, lookY: 1.2, lookZ: -1.6, fov: 55, half: 5.6 }; // menu camera: inside the corridor, looking down the road
-const Z_WALL2 = 3.6, EYE_H = 1.62, FOV = 72, SENS = .0026, VM_S = U * .5; // first person: second wall, eye height, look speed, viewmodel scale
+const Z_WALL2 = 11, OBJ_X = WORLD_L * .3 + 10, EYE_H = 1.62, FOV = 72, SENS = .0026, VM_S = U * .5; // first person: second wall, eye height, look speed, viewmodel scale
 const CONFIG = {
   gravity: 15, playerSpeed: 3.2, playerHP: 100, bulletRange: 40,
   weapons: {
@@ -36,6 +37,7 @@ const CONFIG = {
     brute:   { hp: 420, speed: .45, dmg: 26, scale: 1.35, cash: 40, barricadeMul: 3 },
     crawler: { hp: 48, speed: .5, dmg: 8, scale: 1, cash: 6 },
     spitter: { hp: 55, speed: .62, dmg: 12, scale: 1, cash: 8, range: 6.5, cooldown: 2.6 },
+    gunner:  { hp: 55, speed: .6, dmg: 9, scale: 1, cash: 10, range: 13, cooldown: 2.2, burst: 3, bulletSpeed: 15 },
   },
   headshotMul: 2.5, headshotCash: 3, killScore: 10, maxParticles: 2200, maxRagdolls: 36,
   waveBase: 6, wavePerDiff: 3, hordeMul: 1.6,
@@ -48,15 +50,15 @@ const CONFIG = {
 };
 const WEAP_ORDER = ['knife', 'pistol', 'smg', 'rifle', 'shotgun', 'sniper'];
 const LEVELS = [
-  { name: 'CHECKPOINT', obj: 'waves', waves: 5, startCash: 0, flank: 0, dark: 0, mix: { runner: .1, crawler: .08, spitter: 0 },
+  { name: 'CHECKPOINT', obj: 'waves', waves: 5, startCash: 0, flank: 0, dark: 0, mix: { runner: .1, crawler: .08, spitter: 0, gunner: .1 },
     pal: { skyT: [178, 168, 172], skyB: [150, 156, 142], fog: [150, 160, 140], wall: [100, 110, 114], stripeA: [206, 192, 58], stripeB: [44, 48, 66], post: [96, 128, 28], road: [94, 72, 50], fg: [74, 64, 40], light: [216, 240, 192] } },
-  { name: 'OVERPASS', obj: 'hold', waves: 6, startCash: 250, flank: .1, dark: .15, mix: { runner: .18, crawler: .12, spitter: .08 },
+  { name: 'OVERPASS', obj: 'hold', waves: 6, startCash: 250, flank: .1, dark: .15, mix: { runner: .18, crawler: .12, spitter: .08, gunner: .14 },
     pal: { skyT: [214, 140, 90], skyB: [170, 100, 76], fog: [190, 120, 90], wall: [110, 96, 90], stripeA: [190, 50, 40], stripeB: [220, 210, 200], post: [70, 70, 70], road: [100, 74, 52], fg: [70, 54, 40], light: [255, 200, 120] } },
-  { name: 'QUARANTINE', obj: 'survive', waves: 6, startCash: 550, flank: .2, dark: .45, mix: { runner: .25, crawler: .15, spitter: .1 },
+  { name: 'QUARANTINE', obj: 'survive', waves: 6, startCash: 550, flank: .2, dark: .45, mix: { runner: .25, crawler: .15, spitter: .1, gunner: .16 },
     pal: { skyT: [20, 24, 44], skyB: [40, 46, 70], fog: [36, 42, 64], wall: [60, 66, 80], stripeA: [200, 190, 60], stripeB: [30, 32, 44], post: [40, 90, 40], road: [64, 52, 44], fg: [40, 36, 30], light: [255, 240, 200] } },
-  { name: 'BLACKSITE', obj: 'protect', waves: 7, startCash: 900, flank: .25, dark: .3, mix: { runner: .2, crawler: .15, spitter: .18, brute: .04 },
+  { name: 'BLACKSITE', obj: 'protect', waves: 7, startCash: 900, flank: .25, dark: .3, mix: { runner: .2, crawler: .15, spitter: .18, brute: .04, gunner: .18 },
     pal: { skyT: [60, 30, 34], skyB: [90, 44, 40], fog: [90, 40, 38], wall: [70, 62, 64], stripeA: [220, 40, 30], stripeB: [30, 26, 28], post: [90, 90, 90], road: [74, 54, 44], fg: [46, 36, 32], light: [255, 70, 50] } },
-  { name: 'LAST STAND', obj: 'waves', waves: Infinity, startCash: 1300, flank: .3, dark: .2, mix: { runner: .25, crawler: .15, spitter: .18, brute: .05 },
+  { name: 'LAST STAND', obj: 'waves', waves: Infinity, startCash: 1300, flank: .3, dark: .2, mix: { runner: .25, crawler: .15, spitter: .18, brute: .05, gunner: .2 },
     pal: { skyT: [120, 140, 90], skyB: [96, 116, 66], fog: [120, 150, 80], wall: [86, 96, 80], stripeA: [190, 200, 60], stripeB: [40, 46, 30], post: [120, 150, 40], road: [84, 72, 48], fg: [60, 58, 36], light: [200, 255, 120] } },
 ];
 
@@ -140,7 +142,32 @@ const GUNS = {
   smg: [[-6, -2, 5, 3, '#2e2e2e'], [-1, -3, 10, 3, '#262626'], [9, -2, 5, 1, '#1a1a1a'], [2, 0, 2, 6, '#1c1c1c'], [-1, 0, 2, 3, '#1c1c1c'], [1, -4, 3, 1, '#111']],
   sniper: [[-10, -2, 8, 3, '#4a3a26'], [-2, -3, 12, 3, '#2a2a2a'], [10, -2, 14, 1, '#1c1c1c'], [0, -6, 9, 2, '#151515'], [1, -4, 2, 1, '#111'], [6, -4, 2, 1, '#111'], [-1, 0, 2, 3, '#4a3a26'], [3, 0, 2, 3, '#1c1c1c']],
 };
-const MUZZLE = { pistol: 8, smg: 14, rifle: 18, shotgun: 18, sniper: 24, knife: 9 };
+// viewmodel guns: [shape b=box|c=cylinder, x, y, z, size x (cyl: length), y (cyl: diameter), z, colour, m=metal|p=polymer|w=wood, tilt]
+const GUN3D = {
+  rifle: { muz: [.6, .045], ads: .118, left: [.27, -.005], parts: [
+    ['b', .02, 0, 0, .16, .05, .028, '#2b2b2b', 'm'], ['b', .03, .045, 0, .2, .045, .03, '#262626', 'm'], ['b', .05, .072, 0, .26, .012, .022, '#1a1a1a', 'm'],
+    ['b', .27, .04, 0, .26, .055, .042, '#2e2e2c', 'p'], ['b', .2, .04, -.0215, .035, .018, .002, '#121212', 'p'], ['b', .27, .04, -.0215, .035, .018, .002, '#121212', 'p'], ['b', .34, .04, -.0215, .035, .018, .002, '#121212', 'p'],
+    ['c', .5, .045, 0, .2, .018, 0, '#1b1b1b', 'm'], ['b', .415, .07, 0, .02, .045, .016, '#1c1c1c', 'm'], ['c', .585, .045, 0, .05, .026, 0, '#141414', 'm'],
+    ['b', .07, -.065, 0, .05, .12, .022, '#2a2a28', 'p', .25], ['b', .07, -.01, 0, .065, .04, .032, '#262626', 'm'], ['b', -.025, -.055, 0, .032, .085, .026, '#202020', 'p', -.3],
+    ['b', .02, -.032, 0, .05, .006, .012, '#1c1c1c', 'm'], ['c', -.13, .045, 0, .16, .03, 0, '#1f1f1f', 'm'], ['b', -.22, .028, 0, .13, .07, .036, '#2a2a28', 'p'], ['b', -.29, .028, 0, .015, .085, .04, '#111', 'p'],
+    ['b', -.06, .07, 0, .03, .01, .03, '#1c1c1c', 'm'], ['b', .05, .09, 0, .045, .022, .02, '#181818', 'm'], ['c', .05, .118, 0, .075, .04, 0, '#151515', 'm'], ['c', .09, .118, 0, .008, .046, 0, '#0c0c0c', 'm']] },
+  smg: { muz: [.33, .045], ads: .085, left: [.17, .0], parts: [
+    ['b', .05, .04, 0, .24, .05, .032, '#262626', 'm'], ['b', .2, .03, 0, .11, .05, .04, '#2c2c2c', 'p'], ['c', .29, .045, 0, .08, .02, 0, '#181818', 'm'],
+    ['b', .27, .075, 0, .015, .03, .012, '#1a1a1a', 'm'], ['b', .12, -.065, 0, .035, .12, .02, '#222', 'm', .35], ['b', -.02, -.05, 0, .03, .08, .026, '#1e1e1e', 'p', -.25],
+    ['b', .02, -.025, 0, .045, .006, .012, '#1c1c1c', 'm'], ['b', -.14, .05, -.012, .14, .012, .006, '#1a1a1a', 'm'], ['b', -.14, .05, .012, .14, .012, .006, '#1a1a1a', 'm'], ['b', -.21, .035, 0, .015, .07, .04, '#141414', 'p'],
+    ['c', -.05, .08, 0, .02, .024, 0, '#151515', 'm']] },
+  shotgun: { muz: [.56, .06], ads: .075, left: [.25, -.005], parts: [
+    ['b', .02, .045, 0, .16, .055, .034, '#2a2a2a', 'm'], ['c', .32, .06, 0, .48, .022, 0, '#1e1e1e', 'm'], ['c', .3, .03, 0, .4, .022, 0, '#262626', 'm'],
+    ['b', .25, .03, 0, .14, .04, .042, '#6b4a2a', 'w'], ['b', -.17, .02, 0, .22, .07, .036, '#5e4026', 'w', .1], ['b', -.04, -.02, 0, .06, .06, .03, '#5e4026', 'w', -.4],
+    ['b', .01, -.012, 0, .05, .006, .012, '#1c1c1c', 'm'], ['b', .55, .074, 0, .006, .006, .006, '#d8d8d8', 'm']] },
+  knife: { muz: [.2, 0], ads: .05, parts: [['b', -.02, 0, 0, .1, .025, .02, '#2d3a1a', 'p'], ['b', .035, 0, 0, .01, .04, .022, '#3a3a3a', 'm'], ['b', .12, .005, 0, .16, .03, .004, '#c8c8c8', 'm'], ['b', .205, .01, 0, .02, .016, .004, '#c8c8c8', 'm', .6]] },
+  pistol: { muz: [.18, .06], ads: .078, model: 'pistol', parts: [
+    ['b', .06, .055, 0, .19, .03, .026, '#3a3a3a', 'm'], ['b', .055, .03, 0, .17, .025, .024, '#1e1e1e', 'p'], ['b', -.01, -.02, 0, .03, .08, .025, '#1a1a1a', 'p', -.25], ['b', .03, 0, 0, .04, .006, .01, '#1a1a1a', 'm']] },
+  sniper: { muz: [.55, .05], ads: .135, left: [.3, 0], model: 'sniper', modelMuz: [.89, .025], modelX: .29, parts: [
+    ['b', -.2, .02, 0, .26, .07, .036, '#4a3a26', 'w'], ['b', .05, .04, 0, .26, .05, .034, '#4a3a26', 'w'], ['b', .02, .065, 0, .14, .03, .03, '#222', 'm'],
+    ['c', .4, .06, 0, .4, .02, 0, '#1c1c1c', 'm'], ['c', .03, .11, 0, .3, .04, 0, '#151515', 'm'], ['c', -.1, .11, 0, .06, .05, 0, '#151515', 'm'], ['c', .17, .11, 0, .07, .055, 0, '#151515', 'm']] },
+};
+for (const g of Object.values(GUN3D)) g.parts.forEach(pt => { pt[7] = hex3(pt[7]); });
 function drawGun2D(c, type, x, y, sc = 1) { c.save(); c.translate(x, y); c.scale(sc, sc); for (const r of GUNS[type]) { c.fillStyle = r[4]; c.fillRect(r[0], r[1], r[2], r[3]); } c.restore(); }
 
 // ================= AUDIO =================
@@ -237,10 +264,11 @@ function sfx(name, ms = 30) {
 }
 
 // ================= INPUT =================
-const input = { keys: {}, mx: W * .75, my: 150, mouseDown: false, firePressed: false, touch: false, joy: null, look: null, ads: false, fireTouch: 0, holds: {} };
+const input = { keys: {}, mx: W * .75, my: 150, mouseDown: false, firePressed: false, touch: false, joy: null, look: null, ads: false, fireTouch: 0, holds: {}, lookAmt: 0, noLock: false };
 let UI = [];
 function toLocal(e) { const r = uiCv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; }
-uiCv.addEventListener('pointerdown', e => {
+// listeners sit on the whole page: on wide phones the letterbox bars are where thumbs rest (joystick left, look right)
+document.addEventListener('pointerdown', e => {
   if (e.pointerType !== 'mouse') e.preventDefault(); // on mouse it would suppress mousedown/mouseup
   audioInit();
   const [x, y] = toLocal(e), touch = e.pointerType !== 'mouse';
@@ -258,19 +286,19 @@ uiCv.addEventListener('pointerdown', e => {
     }
   }
   if (state === 'title') { state = 'levels'; return; }
-  if (state === 'place') { const gp = groundAt(x, y); if (gp) placeDefense(gp.x); return; }
+  if (state === 'place') { const gp = groundAt(x, y); if (gp) placeDefense(gp.x, gp.z); return; }
   if (state !== 'play') return;
   if (touch) {
     if (x < W * .42 && y > 110) input.joy = { id: e.pointerId, cx: x, cy: y, x, y };
     else input.look = { id: e.pointerId, x, y };
   }
 });
-uiCv.addEventListener('pointermove', e => {
+document.addEventListener('pointermove', e => {
   const [x, y] = toLocal(e);
   if (input.joy && input.joy.id === e.pointerId) { input.joy.x = x; input.joy.y = y; return; }
   if (input.look && input.look.id === e.pointerId) { look((x - input.look.x) * 2.4, (y - input.look.y) * 2.4); input.look.x = x; input.look.y = y; return; }
   const mvx = e.movementX || 0, mvy = e.movementY || 0; // Chrome can report bogus jumps of hundreds of px around pointer lock: drop them
-  if (state === 'play' && e.pointerType === 'mouse' && (document.pointerLockElement === uiCv || e.buttons) && Math.abs(mvx) < 150 && Math.abs(mvy) < 150) look(mvx, mvy);
+  if (state === 'play' && e.pointerType === 'mouse' && Math.abs(mvx) < 150 && Math.abs(mvy) < 150) look(mvx, mvy);
   if (e.pointerType === 'mouse' || state !== 'play') { input.mx = x; input.my = y; }
 });
 function pointerEnd(e) {
@@ -282,16 +310,16 @@ function pointerEnd(e) {
   if (e.pointerType === 'mouse') { input.mouseDown = false; input.ads = false; }
 }
 // mouse buttons: mousedown/mouseup fire for every button even when chorded, pointer events do not
-uiCv.addEventListener('mousedown', e => {
+document.addEventListener('mousedown', e => {
   if (input.uiHit) { input.uiHit = false; return; }
   if (state !== 'play') return;
+  if (!document.pointerLockElement && uiCv.requestPointerLock) { lockPointer(); if (!input.noLock) return; } // first click only captures the mouse
   if (e.button === 0) { input.mouseDown = true; input.firePressed = true; } else if (e.button === 2) input.ads = true;
-  lockPointer();
 });
-uiCv.addEventListener('mouseup', e => { if (e.button === 0) input.mouseDown = false; else if (e.button === 2) input.ads = false; });
-uiCv.addEventListener('pointerup', pointerEnd);
-uiCv.addEventListener('pointercancel', pointerEnd);
-uiCv.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('mouseup', e => { if (e.button === 0) input.mouseDown = false; else if (e.button === 2) input.ads = false; });
+document.addEventListener('pointerup', pointerEnd);
+document.addEventListener('pointercancel', pointerEnd);
+document.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('keydown', e => {
   audioInit();
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
@@ -311,10 +339,15 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { input.keys[e.code] = false; if (e.code === 'Space') input.mouseDown = false; });
 addEventListener('blur', () => { input.keys = {}; input.mouseDown = false; input.ads = false; });
 let lockLost = 0;
-function look(dx, dy) { if (state !== 'play' || !player.alive) return; const k = SENS * settings.sens * lerp(1, .5, player.adsT); player.heading += dx * k; player.pitch = clamp(player.pitch - dy * k, -1.35, 1.35); }
+function look(dx, dy) {
+  if (state !== 'play' || !player.alive) return; const p = player, k = SENS * settings.sens * lerp(1, .5, p.adsT);
+  p.heading += dx * k; p.pitch = clamp(p.pitch - dy * k, -1.35, 1.35); input.lookAmt += Math.abs(dx) + Math.abs(dy);
+  p.swayX = clamp(p.swayX - dx * k * .3, -.08, .08); p.swayY = clamp(p.swayY + dy * k * .3, -.08, .08); // the gun lags behind the view
+}
 function lockPointer() { if (input.touch || document.pointerLockElement === uiCv || !uiCv.requestPointerLock) return; try { const r = uiCv.requestPointerLock(); if (r && r.catch) r.catch(() => { }); } catch (e) { } }
 // the browser drops pointer lock on Esc: treat it as pause
-document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) { lockLost = performance.now(); if (state === 'play') state = 'pause'; } });
+document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) { lockLost = performance.now(); if (state === 'play') state = 'pause'; } else input.noLock = false; });
+document.addEventListener('pointerlockerror', () => { input.noLock = true; }); // lock refused (too soon, iframe): clicks fire and the bare mouse still looks
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') togglePause(); });
 
 // ================= THREE SETUP =================
@@ -322,16 +355,16 @@ const renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: true, powerPre
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = .6;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(FOV, W / H, .05, 160);
+const camera = new THREE.PerspectiveCamera(FOV, W / H, .05, 220);
 const hemi = new THREE.HemisphereLight(0xffffff, 0x443322, .35); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 3);
 sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.0004; sun.shadow.normalBias = .03;
-Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 14, bottom: -14, near: 1, far: 70 }); sun.shadow.camera.updateProjectionMatrix();
+Object.assign(sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 140 }); sun.shadow.camera.updateProjectionMatrix();
 scene.add(sun, sun.target);
 const SUN_DIR = new THREE.Vector3(-.4, .8, .45).normalize();
 const muzzleLight = new THREE.PointLight(0xffc070, 0, 10, 2); scene.add(muzzleLight);
 const boomLight = new THREE.PointLight(0xff8a30, 0, 18, 2); scene.add(boomLight);
-const lampLights = [0, 1, 2].map(() => { const l = new THREE.PointLight(0xffffff, 0, 14, 2); scene.add(l); return l; });
+const lampLights = [0, 1, 2, 3].map(() => { const l = new THREE.PointLight(0xffffff, 0, 16, 2); scene.add(l); return l; });
 // physical sky; its light is baked into an environment map so every surface gets sky reflections and ambient
 const sky = new Sky(); sky.scale.setScalar(140); scene.add(sky);
 const envScene = new THREE.Scene(), envSky = new Sky(); envSky.scale.setScalar(100); envScene.add(envSky);
@@ -342,9 +375,9 @@ starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
 const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdfe6ff, size: 1.5, sizeAttenuation: false, fog: false })); stars.visible = false; scene.add(stars);
 // post: ambient occlusion, bloom on lights and flashes, filmic tone, then grain/vignette/grade
 const GRADE = {
-  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, vig: { value: .38 }, grain: { value: .035 }, tint: { value: new THREE.Vector3(1, 1, 1) }, ca: { value: .006 }, blur: { value: 0 }, split: { value: .55 }, bars: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, slow: { value: 0 }, vig: { value: .38 }, grain: { value: .035 }, tint: { value: new THREE.Vector3(1, 1, 1) }, ca: { value: .006 }, blur: { value: 0 }, split: { value: .55 }, bars: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float time, vig, grain, ca, blur, split, bars; uniform vec3 tint; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float time, slow, vig, grain, ca, blur, split, bars; uniform vec3 tint; varying vec2 vUv;
     float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + time) * 43758.5453); }
     void main() {
       vec2 d = vUv - .5; float r2 = dot(d, d); vec2 off = d * ca * r2 * 4.0;
@@ -354,7 +387,8 @@ const GRADE = {
       float l = dot(c, vec3(.299, .587, .114));
       c = mix(c, c * mix(vec3(.86, 1.0, 1.08), vec3(1.1, 1.0, .85), smoothstep(.1, .75, l)), split);
       c = mix(vec3(l), c, 1.1);
-      c *= 1.0 - vig * r2 * 2.2;
+      c = mix(c, vec3(l) * vec3(.86, .95, 1.1), slow * .5); // frozen time drains colour
+      c *= 1.0 - (vig + slow * .25) * r2 * 2.2;
       c += (rnd(vUv * 731.0) - .5) * grain;
       float bar = .11 * bars; if (vUv.y < bar || vUv.y > 1.0 - bar) c = vec3(0.0);
       gl_FragColor = vec4(c, 1.0);
@@ -396,7 +430,12 @@ const statics = inst(RBOX, std(.85), 1800, true);
 const staticMetal = inst(RBOX, std(.38, .55), 500, true);
 const staticCyl = inst(CYL, std(.6, .3), 400, true);
 const staticGlow = inst(BOXG, new THREE.MeshBasicMaterial(), 600, false);
-const DYN = [solid, limbs, balls, metal, cyls, glow, beam, smoke], STATIC = [statics, staticMetal, staticCyl, staticGlow];
+const JERSEY_G = (() => { // road barrier cross-section, 1 m long along x, 0.81 m tall
+  const g = new THREE.ExtrudeGeometry(new THREE.Shape([[-.3, 0], [.3, 0], [.3, .08], [.1, .33], [.075, .81], [-.075, .81], [-.1, .33], [-.3, .08]].map(([x, y]) => new THREE.Vector2(x, y))), { depth: 1, bevelEnabled: false });
+  g.translate(0, 0, -.5); g.rotateY(Math.PI / 2); g.computeVertexNormals(); return g;
+})();
+const staticJersey = inst(JERSEY_G, std(.9), 400, true);
+const DYN = [solid, limbs, balls, metal, cyls, glow, beam, smoke], STATIC = [statics, staticMetal, staticCyl, staticGlow, staticJersey];
 // AO must not see particles, sky or decals: hide them while it renders its own depth/normal pass
 const gtaoRender = gtao.render.bind(gtao), AO_HIDE = () => [glow, beam, smoke, sky, stars, decalMesh];
 const hideWhile = (pass, fn) => (...a) => { const h = AO_HIDE(), v = h.map(o => o.visible); h.forEach(o => { o.visible = false; }); fn(...a); h.forEach((o, i) => { o.visible = v[i]; }); };
@@ -466,33 +505,48 @@ function fadeDecals() { dctx.globalCompositeOperation = 'destination-out'; dctx.
 const envGroup = new THREE.Group(); scene.add(envGroup);
 let obstacles = [];
 const CAR_C = ['#6a3020', '#3e4c5a', '#7a6a40', '#3a4a3a', '#5a2a2a', '#8a8a86'].map(h => new THREE.Color(h));
-function genObstacles(Lv) { // wrecks, barriers and crates; keeps the spawn spot and the objective area clear
+const OB_CELL = 4, OB_X0 = -12, OB_N = Math.ceil((WORLD_L + 24) / OB_CELL) + 1, OB_PAD = 1.6;
+let obGrid = Array.from({ length: OB_N }, () => []);
+const obCell = x => clamp(Math.floor((x - OB_X0) / OB_CELL), 0, OB_N - 1);
+function indexObstacles() { obGrid = Array.from({ length: OB_N }, () => []); for (const b of obstacles) for (let c = obCell(b.x0 - OB_PAD); c <= obCell(b.x1 + OB_PAD); c++) obGrid[c].push(b); }
+const nearBoxes = x => obGrid[obCell(x)]; // every box within OB_PAD of x
+const QY90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), QZ90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+function genObstacles(Lv) { // wrecks, barrier runs, crates and barrels over the whole road; the start and the objective stay clear
   obstacles = [];
-  const add = (x, z, w, d, h, kind) => obstacles.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, h, kind, x, z, w, d });
-  for (let x = 3 + rnd(3.5, 6); x < WORLD_L - 2; x += rnd(3.5, 6)) {
-    if (Math.abs(x - 12) < 3.5 || Math.abs(x - 22) < 4) continue;
-    const r = Math.random();
-    if (r < .45) add(x, pick([-2.35, 1.95]), 3.4, 1.6, 1.25, 'car');
-    else if (r < .75) add(x, rnd(-2.2, 1.8), 1.7, .62, .85, 'jersey');
-    else add(x, rnd(-2.3, 1.9), 1, 1, 1, 'crate');
+  const add = (x, z, w, d, h, kind, along) => { obstacles.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, h, kind, x, z, w, d, along }); indexObstacles(); };
+  const sx = WORLD_L * .3, free = (x, z, r) => Math.hypot(x - sx, z) > 5 && Math.hypot(x - OBJ_X, z) > 4.5 && z > Z_MIN + r && z < Z_MAX - r && !inBox(x, z, r);
+  if (Lv.obj === 'protect') add(OBJ_X, -1.75, 4.4, 1.9, 2.1, 'truck');
+  for (let i = 0; i < WORLD_L * .6; i++) {
+    const x = rnd(1.5, WORLD_L - 1.5), z = rnd(Z_MIN + 1, Z_MAX - 1), r = Math.random(), along = Math.random() < .7;
+    if (r < .3) { if (free(x, z, 1.3)) add(x, z, along ? 4.4 : 1.8, along ? 1.8 : 4.4, 1.4, 'car', along); }
+    else if (r < .6) { for (let k = 0, n = 1 + (Math.random() * 3 | 0); k < n; k++) { const bx = along ? x + k * 1.62 : x, bz = along ? z : z + k * 1.62; if (free(bx, bz, .4)) add(bx, bz, along ? 1.6 : .66, along ? .66 : 1.6, .85, 'jersey', along); } }
+    else if (r < .8) { if (free(x, z, .7)) add(x, z, along ? 1.15 : .57, along ? .57 : 1.15, Math.random() < .4 ? .96 : .48, 'crate', along); }
+    else for (let k = 0, n = 1 + (Math.random() * 3 | 0); k < n; k++) { const bx = x + (k & 1) * .72, bz = z + (k >> 1) * .72; if (free(bx, bz, .4)) add(bx, bz, .7, .7, .93, 'barrel', true); }
   }
-  if (Lv.obj === 'protect') add(22, -1.75, 4.4, 1.9, 2.1, 'truck');
-  const tire = hex3('#161616'), rim = hex3('#8a8a8a'), glass = hex3('#1c242c'), bump = hex3('#9a968c'), conc = hex3('#8e8c86'), wood = hex3('#7a5a36'), woodD = hex3('#4a3220'), rust = hex3('#5a3a22');
-  for (const b of obstacles) {
-    if (b.kind === 'car') {
-      const col = pick(CAR_C);
-      box(staticMetal, b.x, .58, b.z, b.w, .52, b.d, col); box(staticMetal, b.x - .25, 1.08, b.z, b.w * .52, .5, b.d * .9, col);
-      box(staticMetal, b.x - .25, 1.08, b.z, b.w * .5, .36, b.d * .92, glass); box(staticMetal, b.x - .25 + b.w * .27, 1.06, b.z, .05, .4, b.d * .86, glass);
-      box(staticMetal, b.x + b.w / 2, .5, b.z, .1, .18, b.d * .96, bump); box(staticMetal, b.x - b.w / 2, .5, b.z, .1, .18, b.d * .96, bump);
-      box(statics, b.x + rnd(-.8, .8), .86, b.z + rnd(-.3, .3), rnd(.3, .8), .02, rnd(.2, .5), rust);
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) { box(staticCyl, b.x + sx * b.w * .31, .3, b.z + sz * b.d * .47, .6, .24, .6, tire, QX90); box(staticCyl, b.x + sx * b.w * .31, .3, b.z + sz * b.d * .5, .34, .2, .34, rim, QX90); }
-    } else if (b.kind === 'jersey') { box(statics, b.x, .17, b.z, b.w, .34, b.d, conc); box(statics, b.x, .58, b.z, b.w, .56, b.d * .48, conc); }
-    else if (b.kind === 'crate') { box(statics, b.x, .5, b.z, 1, 1, 1, wood); box(statics, b.x, .5, b.z, 1.03, .1, 1.03, woodD); box(statics, b.x, .5, b.z, .1, 1.03, 1.03, woodD); }
-  }
+  drawObstacles();
 }
-function inBox(x, z, r) { for (const b of obstacles) if (x > b.x0 - r && x < b.x1 + r && z > b.z0 - r && z < b.z1 + r) return b; return null; }
-function pushOut(o, r) { // push a circle (o.x, o.z, r) out of every box
+const JCOL = hex3('#d8d4cc'), TIRE = hex3('#161616'), RIM = hex3('#8a8a8a'), GLASS = hex3('#1c242c'), BUMP = hex3('#9a968c'), CONC = hex3('#8e8c86'), WOODC = hex3('#7a5a36'), WOODD = hex3('#4a3220'), RUST = hex3('#5a3a22'), DRUM = hex3('#3e4a3a'), DRUMD = hex3('#2a3328');
+let OBST_MARK = null;
+function drawObstacles() { // boxy stand-ins; replaced by the scanned models once they load
+  OBST_MARK = STATIC.map(m => m.count);
+  const models = MODELS.ready; if (models) for (const k of PROP_MODELS) for (const m of MI[k]) m.count = 0;
   for (const b of obstacles) {
+    if (models && drawObstacleModel(b)) continue;
+    const q = b.along ? IDQ : QY90, at = (lx, lz) => b.along ? [b.x + lx, b.z + lz] : [b.x + lz, b.z + lx], L_ = Math.max(b.w, b.d), D_ = Math.min(b.w, b.d);
+    if (b.kind === 'car') {
+      const col = pick(CAR_C); let [x, z] = at(0, 0);
+      box(staticMetal, x, .58, z, L_, .52, D_, col, q); [x, z] = at(-.25, 0); box(staticMetal, x, 1.08, z, L_ * .52, .5, D_ * .9, col, q); box(staticMetal, x, 1.08, z, L_ * .5, .36, D_ * .92, GLASS, q);
+      for (const e of [-1, 1]) { [x, z] = at(e * L_ / 2, 0); box(staticMetal, x, .5, z, .1, .18, D_ * .96, BUMP, q); }
+      for (const sx_ of [-1, 1]) for (const sz of [-1, 1]) { [x, z] = at(sx_ * L_ * .31, sz * D_ * .47); box(staticCyl, x, .3, z, .6, .24, .6, TIRE, b.along ? QX90 : QZ90); }
+    } else if (b.kind === 'jersey') box(staticJersey, b.x, 0, b.z, 1.6, b.h / .81, 1.1, JCOL, q);
+    else if (b.kind === 'crate') { box(statics, b.x, b.h / 2, b.z, b.w, b.h, b.d, WOODC); box(statics, b.x, b.h / 2, b.z, b.w + .03, .06, b.d + .03, WOODD); }
+    else if (b.kind === 'barrel') { box(staticCyl, b.x, .465, b.z, .62, .93, .62, DRUM); box(staticCyl, b.x, .3, b.z, .64, .05, .64, DRUMD); box(staticCyl, b.x, .62, b.z, .64, .05, .64, DRUMD); }
+  }
+  if (models) for (const k of PROP_MODELS) for (const m of MI[k]) m.instanceMatrix.needsUpdate = true;
+}
+function inBox(x, z, r) { for (const b of nearBoxes(x)) if (x > b.x0 - r && x < b.x1 + r && z > b.z0 - r && z < b.z1 + r) return b; return null; }
+function pushOut(o, r) { // push a circle (o.x, o.z, r) out of every box
+  for (const b of nearBoxes(o.x)) {
     const dx_ = o.x - clamp(o.x, b.x0, b.x1), dz_ = o.z - clamp(o.z, b.z0, b.z1), d2 = dx_ * dx_ + dz_ * dz_;
     if (d2 >= r * r) continue;
     if (d2 > 1e-8) { const d = Math.sqrt(d2), f = (r - d) / d; o.x += dx_ * f; o.z += dz_ * f; continue; }
@@ -524,7 +578,7 @@ function pbr(set, rx, ry, mat, withMap = true, normalScale = 1) { // put a downl
 function applySurfaces(Lv) { // real asphalt, concrete, rusted paint and metal once the textures are in
   if (ENV.road && pbr('asphalt', ROAD_LEN / 3.5, ROAD_D / 3.5, ENV.road.material)) ENV.road.material.color.copy(C3(lerpC([255, 255, 255], Lv.pal.road, .25)));
   for (const w of ENV.walls) pbr('concrete', ROAD_LEN / 2.4, 1, w.material, false, .8);
-  pbr('carmetal', 1, 1, staticMetal.material); pbr('barrel', 1, 1, staticCyl.material, false); pbr('concrete', 1, 1, statics.material, false, .6);
+  pbr('carmetal', 1, 1, staticMetal.material); pbr('concrete', 1.2, 1.2, staticJersey.material, true, .9); pbr('barrel', 1, 1, staticCyl.material, false); pbr('concrete', 1, 1, statics.material, false, .6);
 }
 function stripTex(paint, w, h, rx) { const c = mk(w, h), g = c.getContext('2d'); paint(g, w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.repeat.set(rx, 1); t.anisotropy = 8; return t; }
 // procedural surfaces: albedo drawn with layered blotches, normal map derived from its brightness
@@ -585,8 +639,35 @@ function applySky(Lv) { // photographed sky when loaded (background + lighting),
   for (const l of lampLights) { l.color.copy(C3(p.light)); l.intensity = dk > 0 ? 25 + dk * 70 : 0; }
   flare.visible = !night && SUN_DIR.y > .02;
 }
+// city blocks behind the walls: one merged mesh, facades tiled per storey and bay, windows lit after dark
+const FACADE = (() => {
+  const c = mk(256, 256), e = mk(256, 256), g = c.getContext('2d'), ge = e.getContext('2d');
+  g.fillStyle = '#8a857c'; g.fillRect(0, 0, 256, 256); blotches(g, 256, 256, [138, 133, 124], 260, 2, 30, .08);
+  ge.fillStyle = '#000'; ge.fillRect(0, 0, 256, 256);
+  for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) { // 4 storeys x 4 bays per tile
+    const x = k * 64 + 12, y = r * 64 + 14, w = 40, h = 36, v = Math.random();
+    g.fillStyle = v < .12 ? '#5a4632' : v < .2 ? '#0a0a0a' : `rgb(${30 + rnd(0, 25)},${36 + rnd(0, 25)},${44 + rnd(0, 30)})`; g.fillRect(x, y, w, h); // glass, boarded or broken
+    g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(x, y, w, 3); g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x - 2, y + h, w + 4, 4);
+    g.fillStyle = 'rgba(30,26,22,.6)'; g.fillRect(x + w / 2 - 1, y, 2, h);
+    if (v > .2 && Math.random() < .3) { ge.fillStyle = `rgb(255,${190 + rnd(0, 40)},${110 + rnd(0, 50)})`; ge.fillRect(x + 2, y + 2, w - 4, h - 4); }
+    for (let i = 0; i < 3; i++) { g.fillStyle = 'rgba(20,16,12,.15)'; g.fillRect(x + rnd(0, w), y + h, rnd(2, 5), rnd(10, 40)); } // grime streaks
+  }
+  const t = (cv, srgb) => { const x = new THREE.CanvasTexture(cv); x.wrapS = x.wrapT = THREE.RepeatWrapping; x.anisotropy = 8; if (srgb) x.colorSpace = THREE.SRGBColorSpace; return x; };
+  return { map: t(c, true), emissiveMap: t(e, true) };
+})();
+function buildCity(Lv) {
+  const geos = [], tint = C3(lerpC(Lv.pal.wall, [150, 146, 140], .6));
+  for (const sd of [-1, 1]) for (const row of [0, 1]) for (let x = -40; x < WORLD_L + 40;) {
+    const w = rnd(8, 18), d = rnd(8, 14), h = row ? rnd(14, 42) : rnd(7, 22), z = sd * (Math.abs(Z_WALL) + 4 + row * 16 + d / 2 + rnd(0, 3));
+    const gm = new THREE.BoxGeometry(w, h, d), uv = gm.attributes.uv; // tile: 12 m across (4 bays), 12.8 m up (4 storeys)
+    for (let f = 0; f < 6; f++) { const fw = f < 2 ? d : w, fh = f === 2 || f === 3 ? d : h; for (let i = f * 4; i < f * 4 + 4; i++) uv.setXY(i, uv.getX(i) * fw / 12, uv.getY(i) * fh / 12.8); }
+    gm.translate(x + w / 2, h / 2, z); geos.push(gm); x += w + rnd(.5, 4);
+  }
+  const city = new THREE.Mesh(mergeGeometries(geos), new THREE.MeshStandardMaterial({ map: FACADE.map, emissiveMap: FACADE.emissiveMap, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: Lv.dark > .2 ? 1.6 : 0, color: tint, roughness: .85 }));
+  geos.forEach(g => g.dispose()); city.castShadow = city.receiveShadow = true; city.userData.keepMaps = true; envGroup.add(city);
+}
 function buildLevel(Lv) {
-  for (const o of [...envGroup.children]) { envGroup.remove(o); o.geometry.dispose(); for (const k of ['map', 'normalMap']) if (o.material[k]) o.material[k].dispose(); o.material.dispose(); }
+  for (const o of [...envGroup.children]) { envGroup.remove(o); o.geometry.dispose(); if (!o.userData.keepMaps) for (const k of ['map', 'normalMap']) if (o.material[k]) o.material[k].dispose(); o.material.dispose(); }
   const p = Lv.pal, dk = Lv.dark;
   applySky(Lv);
   const add = (geo, mats, x, y, z, rx = 0, rough = .9) => { const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ ...mats, roughness: rough })); m.position.set(x, y, z); m.rotation.x = rx; m.receiveShadow = true; envGroup.add(m); return m; };
@@ -595,14 +676,17 @@ function buildLevel(Lv) {
   add(new THREE.PlaneGeometry(ROAD_LEN, ROAD_D), surface(1024, 640, (g, w, h) => {
     blotches(g, w, h, asphalt, 900, 2, 40, .07);
     for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(${Math.random() < .5 ? '255,255,255' : '0,0,0'},${rnd(.05, .2)})`; g.fillRect(rnd(0, w), rnd(0, h), 1.5, 1.5); }
-    for (const zz of [.25, 1.95]) { const y = (zz - ROAD_Z0) / ROAD_D * h; g.fillStyle = 'rgba(0,0,0,.12)'; g.fillRect(0, y - 14, w, 28); }
+    for (const zz of [-9.2, -5.5, -1.8, 1.8, 5.5, 9.2]) { const y = (zz - ROAD_Z0) / ROAD_D * h; g.fillStyle = 'rgba(0,0,0,.1)'; g.fillRect(0, y - 6, w, 12); }
     g.strokeStyle = 'rgba(15,12,10,.6)'; g.lineWidth = 1.5;
     for (let i = 0; i < 26; i++) { let x = rnd(0, w), y = rnd(0, h); g.beginPath(); g.moveTo(x, y); for (let j = 0; j < 8; j++) { x += rnd(-22, 22); y += rnd(-22, 22); g.lineTo(x, y); } g.stroke(); }
     for (let i = 0; i < 8; i++) { g.fillStyle = `rgba(10,8,8,${rnd(.15, .35)})`; g.beginPath(); g.ellipse(rnd(0, w), rnd(0, h), rnd(10, 40), rnd(6, 20), rnd(0, 3), 0, 6.283); g.fill(); }
   }, ROAD_LEN / 12, 1, 3), ROAD_X0 + ROAD_LEN / 2, 0, ROAD_Z0 + ROAD_D / 2, -Math.PI / 2, .92);
   ENV.road = envGroup.children[envGroup.children.length - 1];
-  const lane = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_LEN, .13), new THREE.MeshStandardMaterial({ map: stripTex((g, w, h) => { for (let x = 0; x < w; x += 256) { g.fillStyle = 'rgba(225,215,185,.75)'; g.fillRect(x, 0, 128, h); for (let i = 0; i < 40; i++) g.clearRect(x + rnd(0, 128), rnd(0, h), rnd(1, 4), rnd(1, 3)); } }, 512, 8, ROAD_LEN / 6), transparent: true, roughness: .6, depthWrite: false }));
-  lane.rotation.x = -Math.PI / 2; lane.position.set(ROAD_X0 + ROAD_LEN / 2, .003, -.35); lane.receiveShadow = true; envGroup.add(lane);
+  const paintMat = (col, dash) => new THREE.MeshStandardMaterial({ map: stripTex((g, w, h) => { for (let x = 0; x < w; x += dash ? 256 : w) { g.fillStyle = col; g.fillRect(x, 0, dash ? 128 : w, h); for (let i = 0; i < 40; i++) g.clearRect(x + rnd(0, dash ? 128 : w), rnd(0, h), rnd(1, 4), rnd(1, 3)); } }, 512, 8, ROAD_LEN / 6), transparent: true, roughness: .6, depthWrite: false });
+  const dashM = paintMat('rgba(225,215,185,.75)', true), yellowM = paintMat('rgba(220,170,40,.8)', false);
+  for (const [z, m] of [[-7.33, dashM], [-3.66, dashM], [3.66, dashM], [7.33, dashM], [-.12, yellowM], [.12, yellowM]]) {
+    const lane = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_LEN, .13), m); lane.rotation.x = -Math.PI / 2; lane.position.set(ROAD_X0 + ROAD_LEN / 2, .003, z); lane.receiveShadow = true; envGroup.add(lane);
+  }
   // concrete wall panels: stains, drips, seam, worn hazard stripe
   const wallS = surface(256, 280, (g, w, h) => {
     blotches(g, w, h, p.wall, 500, 2, 34, .07);
@@ -625,29 +709,23 @@ function buildLevel(Lv) {
   const postC = C3(p.post), poleC = hex3('#2e3034'), lightC = C3(p.light, 3);
   for (let x = ROAD_X0 + 2.4 - .1; x < ROAD_X0 + ROAD_LEN; x += 2.4) { box(staticMetal, x, 1.86, Z_WALL + .04, .14, .6, .1, postC); box(staticMetal, x, 1.86, Z_WALL2 - .04, .14, .6, .1, postC); }
   LAMPS = [];
-  for (let x = 3; x < WORLD_L; x += 10) {
-    LAMPS.push(x);
-    box(staticCyl, x, 2.2, Z_WALL + .35, .12, 4.4, .12, poleC); box(staticMetal, x + .4, 4.35, Z_WALL + .35, .9, .1, .1, poleC);
-    box(staticMetal, x + .75, 4.3, Z_WALL + .35, .42, .1, .26, poleC); box(staticGlow, x + .75, 4.24, Z_WALL + .35, .34, .03, .2, lightC);
+  for (const sd of [-1, 1]) for (let x = sd < 0 ? 3 : 11; x < WORLD_L; x += 16) { // lamps on both kerbs, arms reaching over the road
+    const z = sd < 0 ? Z_WALL + .35 : Z_WALL2 - .35, iz = -sd; LAMPS.push({ x, z: z + iz * .9 });
+    box(staticCyl, x, 2.6, z, .14, 5.2, .14, poleC); box(staticMetal, x, 5.15, z + iz * .55, .1, .1, 1.2, poleC);
+    box(staticMetal, x, 5.1, z + iz * 1.1, .26, .1, .44, poleC); box(staticGlow, x, 5.04, z + iz * 1.1, .2, .03, .36, lightC);
   }
   const olive = hex3('#3e4a3a'), oliveD = hex3('#2a3328'), orange = hex3('#d0601c'), whiteC = hex3('#e8e8e8'), concrete = hex3('#8a8a86'), tire = hex3('#161616');
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < 110; i++) {
     const x = rnd(-9, WORLD_L + 9), z = Math.random() < .5 ? rnd(Z_WALL + .45, Z_WALL + .9) : rnd(Z_WALL2 - .9, Z_WALL2 - .45), r = Math.random(); // props hug the walls
     if (r < .35) { box(staticCyl, x, .44, z, .58, .88, .58, olive); box(staticCyl, x, .3, z, .6, .05, .6, oliveD); box(staticCyl, x, .62, z, .6, .05, .6, oliveD); }
     else if (r < .6) { for (let j = 0; j < 4; j++) box(staticCyl, x, .07 + j * .15, z, .4 - j * .09, .15, .4 - j * .09, j === 2 ? whiteC : orange); box(statics, x, .02, z, .5, .04, .5, orange); }
     else if (r < .8) box(statics, x, .26, z, 1.2, .52, .62, concrete);
     else box(staticCyl, x, .14, z, .66, .28, .66, tire);
   }
-  // distant blocks, with lit windows after dark
-  const silC = C3(lerpC(p.wall, [60, 62, 66], .5), .7), win = C3([255, 200, 130], 2.2);
-  for (let i = 0; i < 22; i++) {
-    const w = rnd(4, 10), h = rnd(5, 18), x = rnd(-24, WORLD_L + 24), side = pick([-1, 1]), z = side * rnd(14, 34);
-    box(statics, x, h / 2, z, w, h, rnd(4, 8), silC);
-    if (dk > .2) for (let j = 0; j < 10; j++) if (Math.random() < .5) box(staticGlow, x + rnd(-w / 2 + .4, w / 2 - .4), rnd(1.5, h - 1), z - side * 2.1, .5, .7, .05, win);
-  }
+  buildCity(Lv);
   applySurfaces(Lv);
+  if (Lv.obj === 'hold') { box(statics, OBJ_X, .25, 0, .6, .5, .6, hex3('#4a5a3a')); box(staticCyl, OBJ_X, 1.4, 0, .06, 2.2, .06, poleC); box(staticMetal, OBJ_X + .15, 2.3, 0, .32, .04, .32, hex3('#9a9a9a')); }
   genObstacles(Lv);
-  if (Lv.obj === 'hold') { box(statics, 22, .25, 0, .6, .5, .6, hex3('#4a5a3a')); box(staticCyl, 22, 1.4, 0, .06, 2.2, .06, poleC); box(staticMetal, 22.15, 2.3, 0, .32, .04, .32, hex3('#9a9a9a')); }
   for (const m of STATIC) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
 }
 
@@ -683,7 +761,7 @@ function poseZombie(z) {
   setL(P, PELV, 0, pv, 0); setL(P, LHIP, 0, pv - 1, -3); setL(P, RHIP, 0, pv - 1, 3);
   const nu = lean + (z.limp ? sw * 1.5 : 0) - (z.flinch > 0 ? 4 : 0), nv = 40 - bob - (run ? 2 : 0), sv = nv - 1.5;
   setL(P, NECK, nu, nv, 0); setL(P, LSH, nu, sv, -4.5); setL(P, RSH, nu, sv, 4.5);
-  const tw = z.tilt + Math.sin(time * 6 + z.seed) * .05;
+  const tw = z.tilt + Math.sin(wtime * 6 + z.seed) * .05;
   setL(P, HEAD, nu + 1.5 + lean * .25 - (z.flinch > 0 ? 2 : 0), nv + 5.2 - Math.abs(tw) * 1.5, tw * 8);
   const k = z.limp ? .3 : 1; // limpers drag the left leg
   setL(P, LKN, sw * stride * .6 * k + 2 - (z.limp ? 2 : 0), 11, -3.2); setL(P, LFT, sw * stride * k - (z.limp ? 4 : 0), z.limp ? 0 : Math.max(0, cs) * 3, -3.4);
@@ -693,6 +771,7 @@ function poseZombie(z) {
     let hu, hv, hw;
     if (z.dangle === sd) { hu = nu + 1 + Math.sin(ph * .5 + sd) * 1.5; hv = sv - 15; hw = sd * 5.5; }
     else if (run && Lg === 0) { hu = nu + Math.sin(ph + phs) * 7; hv = sv - 12; hw = sd * 5.5; }
+    else if (z.type === 'gunner') { hu = nu + 15 + Lg * 2; hv = sv - 1.5; hw = sd * .8 + 1; }
     else { hu = nu + reach; hv = sv - dy - Math.sin(ph * .7 + phs) * 1.5; hw = sd * 3.5; }
     setL(P, ha, hu, hv, hw); setL(P, el, (nu + hu) / 2, (sv + hv) / 2 - 2.5, sd * 5.5);
   };
@@ -705,20 +784,21 @@ function makeRagdoll(src, vx, vy, vz, kind) {
   const P = Float32Array.from(src.P), O = new Float32Array(45), hs = 1.8 * src.s;
   for (let i = 0; i < 15; i++) {
     const k = .6 + Math.random() * .8, h = clamp(P[i * 3 + 1] / hs, 0, 1.3), m = .5 + h * .7;
-    O[i * 3] = P[i * 3] - vx * k * m * STEP; O[i * 3 + 1] = P[i * 3 + 1] - (vy * k + Math.random() * .4) * STEP; O[i * 3 + 2] = P[i * 3 + 2] - vz * k * m * STEP;
+    O[i * 3] = P[i * 3] - vx * k * m * wdt; O[i * 3 + 1] = P[i * 3 + 1] - (vy * k + Math.random() * .4) * wdt; O[i * 3 + 2] = P[i * 3 + 2] - vz * k * m * wdt;
   }
   const sticks = STICKS.map(([a, b]) => [a, b, Math.hypot(P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2])]);
-  return { id: ragId++, P, O, sticks, s: src.s, col: src.col, colB: src.colB, gore: src.gore || [], cut: {}, missing: src.missing || 0, kind, type: src.type, still: 0, age: 0, spurts: [], sleep: false, sink: 0, x: src.x, z: src.z, heading: src.heading };
+  return { id: ragId++, dtp: wdt, P, O, sticks, s: src.s, col: src.col, colB: src.colB, gore: src.gore || [], cut: {}, missing: src.missing || 0, kind, type: src.type, still: 0, age: 0, spurts: [], sleep: false, sink: 0, x: src.x, z: src.z, heading: src.heading };
 }
 function stepRag(r, dt, others) {
-  const P = r.P, O = r.O, gy = CONFIG.gravity * dt * dt; let mv = 0;
+  const P = r.P, O = r.O, gy = CONFIG.gravity * dt * dt, k = dt / (r.dtp || dt) * Math.pow(.995, dt / STEP), fr = Math.pow(.5, dt / STEP); let mv = 0;
+  r.dtp = dt;
   for (let i = 0; i < 15; i++) {
     const ix = i * 3, rad = i === HEAD ? .11 * r.s : .05;
-    const vx = (P[ix] - O[ix]) * .995, vy = (P[ix + 1] - O[ix + 1]) * .995, vz = (P[ix + 2] - O[ix + 2]) * .995;
+    const vx = (P[ix] - O[ix]) * k, vy = (P[ix + 1] - O[ix + 1]) * k, vz = (P[ix + 2] - O[ix + 2]) * k;
     O[ix] = P[ix]; O[ix + 1] = P[ix + 1]; O[ix + 2] = P[ix + 2];
     P[ix] += vx; P[ix + 1] += vy - gy; P[ix + 2] += vz;
     mv = Math.max(mv, Math.abs(vx) + Math.abs(vy) + Math.abs(vz));
-    if (P[ix + 1] < rad) { P[ix + 1] = rad; O[ix] = P[ix] - vx * .5; O[ix + 2] = P[ix + 2] - vz * .5; O[ix + 1] = rad + vy * .2; }
+    if (P[ix + 1] < rad) { P[ix + 1] = rad; O[ix] = P[ix] - vx * fr; O[ix + 2] = P[ix + 2] - vz * fr; O[ix + 1] = rad + vy * .2; }
     if (P[ix + 2] < Z_WALL + .08) P[ix + 2] = Z_WALL + .08; else if (P[ix + 2] > Z_WALL2 - .08) P[ix + 2] = Z_WALL2 - .08;
     const bx = inBox(P[ix], P[ix + 2], 0);
     if (bx && P[ix + 1] < bx.h + rad) { // land on top if coming from above, else slide off the side
@@ -743,12 +823,12 @@ function stepRag(r, dt, others) {
     }
   }
   r.x = P[6]; r.z = P[8];
-  return mv;
+  return mv * STEP / dt; // movement per standard step, so sleeping works at any time scale
 }
 function cutStick(r, a, b) { r.sticks = r.sticks.filter(s => !(s[0] === a && s[1] === b)); r.cut[a + '-' + b] = 1; }
 function cutHead(r, dx_, dz_) {
   cutStick(r, 0, 1); cutStick(r, 0, 3); cutStick(r, 0, 6);
-  r.O[0] = r.P[0] - dx_ * 3 * STEP; r.O[1] = r.P[1] - 3.5 * STEP; r.O[2] = r.P[2] - dz_ * 3 * STEP;
+  r.O[0] = r.P[0] - dx_ * 3 * r.dtp; r.O[1] = r.P[1] - 3.5 * r.dtp; r.O[2] = r.P[2] - dz_ * 3 * r.dtp;
   r.spurts.push({ i: NECK, t: 1.6 }, { i: HEAD, t: .7 });
 }
 function cutLimb(r) {
@@ -790,7 +870,7 @@ function prepTemplate(gltf, key) {
   RIGS.tpl[key] = { scene: root, rest, q0inv: bodyQuat(right, up, new THREE.Quaternion()).invert(), hipsW: b.hips.getWorldQuaternion(new THREE.Quaternion()) };
 }
 function acquireRig(e) {
-  const key = e.type === 'brute' || Math.random() < .72 ? 'soldier' : 'michelle', t = RIGS.tpl[key];
+  const key = e.type === 'brute' || e.type === 'gunner' || Math.random() < .72 ? 'soldier' : 'michelle', t = RIGS.tpl[key];
   let rig = RIGS.pool[key].pop();
   if (!rig) {
     const root = cloneSkinned(t.scene), mats = [];
@@ -841,9 +921,44 @@ async function loadAssets() {
       gl_.loadAsync('assets/Michelle.glb').then(g => { prepTemplate(g, 'michelle'); tick(); }),
     ]);
     RIGS.ready = true; applySky(L); applySurfaces(L);
+    loadModels().catch(e => console.warn('models unavailable, keeping stand-ins', e));
     if (/[?&]test\b/.test(location.search)) rigTest();
   } catch (e) { ASSETS.failed = true; console.warn('assets unavailable, using procedural looks', e); }
   ASSETS.done = true;
+}
+const MODELS = { ready: false, parts: {} };
+const MODEL_FILES = { pistol: ['service_pistol', /_a$/], sniper: ['bolt_action_rifle_7_62'], car: ['covered_car'], barrel: ['barrel_03'], crate: ['wooden_crate_01'], ammo: ['ammo_box'], med: ['medical_box'] };
+const MODEL_CAP = { pistol: 40, sniper: 1, ammo: 24, med: 24, car: 50, barrel: 120, crate: 120 }, MODEL_DYN = ['pistol', 'sniper', 'ammo', 'med'];
+const MI = {};
+function bakeModel(root, keep) { // one geometry per material, node transforms applied
+  root.updateMatrixWorld(true); const byMat = new Map();
+  root.traverse(o => {
+    if (!o.isMesh || (keep && !keep.test(o.name) && !keep.test(o.parent.name))) return;
+    const g = o.geometry.clone().applyMatrix4(o.matrixWorld); for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+    if (!byMat.has(o.material)) byMat.set(o.material, []); byMat.get(o.material).push(g);
+  });
+  return [...byMat].flatMap(([mat, geos]) => { const m = geos.length > 1 ? mergeGeometries(geos) : geos[0]; return m ? [{ geo: m, mat }] : geos.map(g => ({ geo: g, mat })); });
+}
+function putModel(set, pos, q, sc) { _mm.compose(pos, q, _ms.setScalar(sc)); for (const m of set) if (m.count < m.userData.max) m.setMatrixAt(m.count++, _mm); }
+async function loadModels() {
+  const gl_ = new GLTFLoader();
+  await Promise.all(Object.entries(MODEL_FILES).map(([k, [id, keep]]) => gl_.loadAsync(`assets/models/${id}/${id}.gltf`).then(g => { MODELS.parts[k] = bakeModel(g.scene, keep); })));
+  for (const k in MODEL_FILES) MI[k] = MODELS.parts[k].map(({ geo, mat }) => {
+    const m = new THREE.InstancedMesh(geo, mat, MODEL_CAP[k]); m.count = 0; m.frustumCulled = false; m.castShadow = m.receiveShadow = true;
+    if (MODEL_DYN.includes(k)) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.userData.max = MODEL_CAP[k]; scene.add(m); return m;
+  });
+  MODELS.ready = true;
+  if (OBST_MARK) { STATIC.forEach((m, i) => { m.count = OBST_MARK[i]; }); drawObstacles(); for (const m of STATIC) m.instanceMatrix.needsUpdate = m.instanceColor.needsUpdate = true; }
+}
+const _oq = new THREE.Quaternion(), _oe = new THREE.Euler(), _op = new THREE.Vector3();
+const PROP_MODELS = ['car', 'barrel', 'crate'];
+function drawObstacleModel(b) { // scanned props sized to each cover box; false leaves the stand-in (barriers: the scan is too heavy to instance)
+  const turn = b.along ? 0 : Math.PI / 2, flip = (b.x * 7.3 + b.z * 3.1) % 1 > .5 ? Math.PI : 0;
+  if (b.kind === 'car') putModel(MI.car, _op.set(b.x, 0, b.z), _oq.setFromEuler(_oe.set(0, (b.along ? Math.PI / 2 : 0) + flip, 0)), 1);
+  else if (b.kind === 'barrel') putModel(MI.barrel, _op.set(b.x, 0, b.z), _oq.setFromEuler(_oe.set(0, b.x * 13 % 6.28, 0)), 1.08);
+  else if (b.kind === 'crate') for (let y = 0; y < b.h - .1; y += .48) putModel(MI.crate, _op.set(b.x, y, b.z), _oq.setFromEuler(_oe.set(0, turn + flip + (y ? .08 : 0), 0)), 1.39);
+  else return false;
+  return true;
 }
 function rigTest() { // posed rig must follow the skeleton it is driven by
   const out = [], ok = (n, c) => out.push((c ? 'PASS ' : 'FAIL ') + n);
@@ -861,8 +976,9 @@ function rigTest() { // posed rig must follow the skeleton it is driven by
 }
 
 // ================= STATE =================
+let ts = 1, wdt = STEP, wtime = 0; // world time scale: ~0 standing still, 1 while you move, look or shoot
 let state = 'title', time = 0, score = 0, money = 0, shake = 0, flashFrames = 0, hurtFlash = 0, screenFlash = 0, hitStop = 0, msg = null;
-const objective = { type: 'waves', meter: 100, x: 22, z: 0, r: 2.2, truck: null, fail: '', contested: false, boomed: false };
+const objective = { type: 'waves', meter: 100, x: OBJ_X, z: 0, r: 2.2, truck: null, fail: '', contested: false, boomed: false };
 let hurtDirs = [], fade = 1, hitMark = 0, hitKill = false, streak = 0, streakT = 0, streakShow = null;
 const stats = { kills: 0, heads: 0, shots: 0, hits: 0, time: 0 };
 let zombies = [], rags = [], projs = [], tracers = [], pops = [], defenses = [], drops = [], arcs = [], rings = [];
@@ -921,7 +1037,7 @@ function newPlayer() {
     kind: 'player', x: 12, z: 0, s: 1, heading: 0, pitch: 0, kick: 0, hp: CONFIG.playerHP, maxHp: CONFIG.playerHP, alive: true,
     phase: 0, moving: false, recoil: 0, cool: 0, reloadT: 0, weapon: 'rifle', throwT: 0, mag, res, owned,
     nades: CONFIG.grenade.startCount, nadeCd: 0, inv: 0, heat: 0, swing: 0, deadT: 0, gunPitch: 0, aimT: { x: 16, y: 1.05, z: 0 },
-    stamina: CONFIG.move.stamina, staminaT: 0, sprint: false, adsT: 0, swapT: 0, meleeT: 0, meleeCd: 0,
+    stamina: CONFIG.move.stamina, staminaT: 0, sprint: false, adsT: 0, swapT: 0, meleeT: 0, meleeCd: 0, shotT: 0, moveAmt: 0, strafe: 0, swayX: 0, swayY: 0, roll: 0,
   };
 }
 function weaponDamage(w, dmgLv, head) { return w.dmg * (1 + dmgLv * CONFIG.upgrade.dmg) * (head ? CONFIG.headshotMul : 1); }
@@ -935,7 +1051,8 @@ function newZombie(type, x, z) {
     ...palette({ skin, shirt: type === 'brute' ? [90, 70, 60] : pick(SHIRTS), pants: pick(PANTS), shoe: [42, 36, 32], hair: pick(HAIR) }),
     limp: (type === 'walker' || type === 'brute') && Math.random() < .35, tilt: rnd(-.35, .35), dangle: 0, missing: 0,
   };
-  if (type !== 'crawler') { if (Math.random() < .12) zb.missing = pick([-1, 1]); else if (Math.random() < .25) zb.dangle = pick([-1, 1]); }
+  if (type !== 'crawler' && type !== 'gunner') { if (Math.random() < .12) zb.missing = pick([-1, 1]); else if (Math.random() < .25) zb.dangle = pick([-1, 1]); }
+  if (type === 'gunner') Object.assign(zb, { burst: 0, burstT: 0, los: false, losT: 0, flashT: 0 });
   poseZombie(zb);
   for (let i = rnd(0, 5) | 0; i > 0; i--) addGore(zb, zb.x + rnd(-.2, .2), rnd(.2, 1.6), zb.z);
   return zb;
@@ -961,11 +1078,11 @@ function goalOf(z) { // where this zombie is heading: the player, the radio poin
 }
 function updZombie(z, dt) {
   const C = z.cfg, p = player;
-  z.flinch = Math.max(0, z.flinch - dt); z.hitT -= dt; z.atkCd -= dt; z.lunge = Math.max(0, z.lunge - dt * 3);
+  z.flinch = Math.max(0, z.flinch - dt); z.atkCd -= dt; z.lunge = Math.max(0, z.lunge - dt * 3);
   if (z.rise > 0) { z.rise -= dt; if (Math.random() < dt * 20) spawnP(T.DUST, z.x + rnd(-.3, .3), .05, z.z + rnd(-.3, .3), rnd(-.5, .5), rnd(.3, .8), rnd(-.5, .5), DUST3, '', rnd(.1, .2), .7); poseZombie(z); return; }
   let sp = C.speed * z.speedMul * (z.flinch > 0 ? .25 : 1) * (z.limp ? .55 + .9 * Math.max(0, Math.sin(z.phase)) : 1), blocked = null;
   for (const d of defenses) {
-    if (d.hp <= 0) continue;
+    if (d.hp <= 0 || Math.abs(z.z - d.z) > DEF_HALF + .2) continue;
     const ddx = z.x - d.x;
     if (d.type === 'sandbags') { if (ddx > .15 && ddx < .45 * z.s + .15) blocked = d; }
     else if (Math.abs(ddx) < .3) {
@@ -998,6 +1115,10 @@ function updZombie(z, dt) {
     z.phase += dt * 2;
     if (z.atkCd <= 0) { z.atkCd = 1.1; z.lunge = 1; objective.truck.hp -= C.dmg * (C.barricadeMul || 1); sfxAt('impact', z.x, z.z, 80); for (let i = 0; i < 3; i++) spawnP(T.SPARK, gx, rnd(.4, 1.2), gz, rnd(-1, 1), rnd(.5, 2), rnd(-1, 1), hex3('#ffd080'), '', .03, .3); }
   } else if (gk === 'zone' && dist < .5) z.phase += dt;
+  else if (p.alive && z.type === 'gunner' && dp < C.range && gunnerSees(z, dt)) {
+    z.phase += dt; z.heading = turnTo(z.heading, Math.atan2(p.z - z.z, p.x - z.x), dt * 6);
+    if ((z.spitCd -= dt) <= 0) { z.spitCd = C.cooldown * rnd(.8, 1.3); z.burst = C.burst; z.burstT = rnd(.1, .3); }
+  }
   else if (p.alive && z.type === 'spitter' && dp < C.range && near) {
     z.phase += dt * 1.5; z.spitCd -= dt; z.heading = turnTo(z.heading, Math.atan2(p.z - z.z, p.x - z.x), dt * 8);
     if (z.spitCd <= 0) {
@@ -1019,10 +1140,42 @@ function updZombie(z, dt) {
       if (z.type === 'brute' && near) { shake = Math.max(shake, 1.4); sfxAt('stomp', z.x, z.z, 150); for (let i = 0; i < 4; i++) spawnP(T.DUST, z.x + rnd(-.3, .3), .05, z.z + rnd(-.3, .3), rnd(-.6, .6), rnd(.2, .5), rnd(-.3, .3), DUST3, '', rnd(.12, .22), .6); }
     }
   }
+  if (z.type === 'gunner') { z.flashT -= dt; if (z.burst > 0 && p.alive && (z.burstT -= dt) <= 0) { zombieShoot(z); z.burst--; z.burstT = .22; } }
   z.x = clamp(z.x + z.kvx * dt, -5, WORLD_L + 5); z.z = clamp(z.z + z.kvz * dt, Z_MIN, Z_MAX);
   const damp = Math.max(0, 1 - 8 * dt); z.kvx *= damp; z.kvz *= damp;
   pushOut(z, .22 * z.s); z.z = clamp(z.z, Z_MIN, Z_MAX);
   poseZombie(z);
+}
+function gunnerSees(z, dt) { // line of sight to the player's chest, rechecked a few times a second
+  if ((z.losT -= dt) <= 0) {
+    z.losT = .25; const p = player, hx = z.P[RHA * 3], hy = z.P[RHA * 3 + 1], hz = z.P[RHA * 3 + 2], dx_ = p.x - hx, dy_ = 1.3 - hy, dz_ = p.z - hz, d = Math.hypot(dx_, dy_, dz_) || 1;
+    z.los = rayBoxes(hx, hy, hz, dx_ / d, dy_ / d, dz_ / d) > d;
+  }
+  return z.los;
+}
+function zombieShoot(z) {
+  const p = player, C = z.cfg, f = Math.cos(z.heading), g = Math.sin(z.heading);
+  const mx = z.P[RHA * 3] + f * .2, my = z.P[RHA * 3 + 1] + .05, mz = z.P[RHA * 3 + 2] + g * .2;
+  let dx_ = p.x - mx + rnd(-.35, .35), dy_ = 1.3 - my + rnd(-.25, .2), dz_ = p.z - mz + rnd(-.35, .35); const d = Math.hypot(dx_, dy_, dz_) || 1;
+  dx_ /= d; dy_ /= d; dz_ /= d;
+  projs.push({ kind: 'bullet', x: mx, y: my, z: mz, vx: dx_ * C.bulletSpeed, vy: dy_ * C.bulletSpeed, vz: dz_ * C.bulletSpeed, t: 0, dmg: C.dmg, whiz: false });
+  z.flashT = .06; z.lunge = .35; sfxAt('pistol', z.x, z.z, 40);
+  spawnP(T.SMOKE, mx, my, mz, f * .4, .2, g * .4, SMOKE3, '', .03, .4);
+}
+function updBullet(q, dt) { // returns true when the bullet is spent
+  const p = player, ox = q.x - q.vx * dt, oz = q.z - q.vz * dt;
+  if (p.alive) { // closest approach of this step's path to the player's body axis
+    const sx = q.x - ox, sz = q.z - oz, l2 = sx * sx + sz * sz, t = l2 ? clamp(((p.x - ox) * sx + (p.z - oz) * sz) / l2, 0, 1) : 1;
+    const cx = ox + sx * t, cz = oz + sz * t, d = Math.hypot(p.x - cx, p.z - cz), y = q.y - q.vy * dt * (1 - t);
+    if (d < .3 && y > .1 && y < 1.85) { hurtPlayer(q.dmg, ox, oz); return true; }
+    if (d < 1.1 && !q.whiz) { q.whiz = true; sfxAt('ric', q.x, q.z, 90); }
+  }
+  const b = inBox(q.x, q.z, 0);
+  if (q.y <= 0 || q.z < Z_WALL || q.z > Z_WALL2 || (b && q.y < b.h) || q.t > 3) {
+    for (let i = 0; i < 4; i++) spawnP(T.SPARK, q.x, Math.max(.02, q.y), q.z, rnd(-1.5, 1.5) - q.vx * .05, rnd(.5, 2), rnd(-1.5, 1.5) - q.vz * .05, hex3('#ffc060'), '', .03, .25);
+    return true;
+  }
+  return false;
 }
 function damageZombie(z, dmg, head, dx_, dy_, dz_, knock, hx, hy, hz) {
   if (z.dead) return;
@@ -1052,7 +1205,7 @@ function killZombie(z, dx_, dy_, dz_, knock, head, dmg, blast) {
   if (streak >= 3) { const bonus = streak * 2; earn(bonus); streakShow = { n: streak, bonus, t: 1.4 }; }
   if (z.type === 'brute') { hitStop = .07; shake = Math.max(shake, 5); }
   const roll = Math.random(), D = CONFIG.drops;
-  const drop = roll < D.ammo ? 'ammo' : roll < D.ammo + D.med ? 'med' : roll < D.ammo + D.med + D.nade ? 'nade' : null;
+  const drop = z.type === 'gunner' && roll < .45 ? 'ammo' : roll < D.ammo ? 'ammo' : roll < D.ammo + D.med ? 'med' : roll < D.ammo + D.med + D.nade ? 'nade' : null; // gunners carry ammo
   if (drop) drops.push({ type: drop, x: z.x, z: z.z, t: 15 });
   sfx('splat', 50);
 }
@@ -1089,6 +1242,7 @@ function finishReload() {
 }
 // gun frame: X along the barrel, Y up from it, Z = X x Y
 const GX = new THREE.Vector3(), GY = new THREE.Vector3(), GZ = new THREE.Vector3(), _cd = new THREE.Vector3();
+function rollFrame(r) { if (!r) return; const c = Math.cos(r), s = Math.sin(r); _cd.copy(GY); GY.multiplyScalar(c).addScaledVector(GZ, s); GZ.multiplyScalar(c).addScaledVector(_cd, -s); } // lean the gun with the camera
 function gunFrame(heading, pitch) {
   const ch = Math.cos(heading), shd = Math.sin(heading), cp = Math.cos(pitch), sp = Math.sin(pitch);
   GX.set(ch * cp, sp, shd * cp); GY.set(-ch * sp, cp, -shd * sp); GZ.crossVectors(GX, GY);
@@ -1098,16 +1252,17 @@ function viewGrip(p) {
   const rel = p.reloadT > 0, a = p.adsT, knife = p.weapon === 'knife';
   const bob = (p.moving ? Math.sin(p.phase) * (p.sprint ? .03 : .012) : Math.sin(time * 2) * .004) * (1 - a * .8);
   const swap = p.swapT > 0 ? Math.sin(p.swapT / .35 * Math.PI) * .25 : 0, jab = p.meleeT > 0 ? Math.sin(p.meleeT / .25 * Math.PI) * .14 : 0;
-  gunFrame(p.heading, p.pitch + p.kick);
-  const c = camera.position, ox = lerp(.38, .3, a) - p.recoil * .05 + jab, oy = lerp(-.17, -.125, a) + bob - (rel ? .06 : 0) - p.throwT * .1 - swap - (p.sprint ? .06 : 0), oz = lerp(p.weapon === 'pistol' ? .13 : .16, 0, a);
+  const sx = p.swayX * (1 - a * .8), sy = p.swayY * (1 - a * .8);
+  gunFrame(p.heading, p.pitch + p.kick); rollFrame(p.roll);
+  const c = camera.position, ox = lerp(.36, .3, a) - p.recoil * .05 + jab, oy = lerp(-.2, -GUN3D[p.weapon].ads, a) + bob - (rel ? .06 : 0) - p.throwT * .1 - swap - (p.sprint ? .06 : 0) + sy * .4, oz = lerp(p.weapon === 'pistol' ? .15 : .18, 0, a) - sx * .4;
   const g = [c.x + GX.x * ox + GY.x * oy + GZ.x * oz, c.y + GX.y * ox + GY.y * oy + GZ.y * oz, c.z + GX.z * ox + GY.z * oy + GZ.z * oz];
   p.gunPitch = p.pitch + p.kick - (rel ? .7 : 0) - p.throwT * .9 - swap * 2 - (p.sprint ? .5 : 0) + (knife ? (p.swing > 0 ? p.swing * 1.6 - 1.2 : -.3) : 0);
-  gunFrame(p.heading + (knife && p.swing > 0 ? (p.swing - .5) * .8 : 0) + (p.sprint ? .35 : 0), p.gunPitch);
+  gunFrame(p.heading + sx + (knife && p.swing > 0 ? (p.swing - .5) * .8 : 0) + (p.sprint ? .35 : 0), p.gunPitch + sy); rollFrame(p.roll);
   return g;
 }
 function muzzlePoint(p) {
-  const [gx, gy, gz] = viewGrip(p), m = MUZZLE[p.weapon] * VM_S;
-  return [gx + GX.x * m + GY.x * 2 * VM_S, gy + GX.y * m + GY.y * 2 * VM_S, gz + GX.z * m + GY.z * 2 * VM_S];
+  const [gx, gy, gz] = viewGrip(p), G = GUN3D[p.weapon], [m, my] = MODELS.ready && G.modelMuz ? G.modelMuz : G.muz;
+  return [gx + GX.x * m + GY.x * my, gy + GX.y * m + GY.y * my, gz + GX.z * m + GY.z * my];
 }
 const scoped = p => p.weapon === 'sniper' && p.adsT > .8;
 function raySpheres(ox, oy, oz, dx_, dy_, dz_, z, scale = 1) {
@@ -1149,7 +1304,7 @@ function hitscan(ox, oy, oz, dx_, dy_, dz_, w, dmg, tx = ox, ty = oy, tz = oz) {
     for (let i = 0; i < 15; i++) {
       const ex = r.P[i * 3] - ox, ey = r.P[i * 3 + 1] - oy, ez = r.P[i * 3 + 2] - oz, t = ex * dx_ + ey * dy_ + ez * dz_;
       if (t > 0 && t < end && ex * ex + ey * ey + ez * ez - t * t < .02) {
-        wake(r); r.O[i * 3] -= dx_ * 2.5 * STEP; r.O[i * 3 + 1] -= 1.6 * STEP; r.O[i * 3 + 2] -= dz_ * 2.5 * STEP;
+        wake(r); r.O[i * 3] -= dx_ * 2.5 * r.dtp; r.O[i * 3 + 1] -= 1.6 * r.dtp; r.O[i * 3 + 2] -= dz_ * 2.5 * r.dtp;
         bloodBurst(r.P[i * 3], r.P[i * 3 + 1], r.P[i * 3 + 2], dx_, dz_, 5); break;
       }
     }
@@ -1159,7 +1314,7 @@ function hitscan(ox, oy, oz, dx_, dy_, dz_, w, dmg, tx = ox, ty = oy, tz = oz) {
 function fire() {
   const p = player, w = CONFIG.weapons[p.weapon], rateMul = 1 - up.rate * CONFIG.upgrade.rate;
   if (w.melee) {
-    p.cool = w.rate * rateMul; p.swing = 1; sfx('knife'); let n = w.pen;
+    p.cool = w.rate * rateMul; p.swing = 1; p.shotT = .18; sfx('knife'); let n = w.pen;
     arcs.push({ x: p.x, y: camera.position.y - .2, z: p.z, h: p.heading, p: p.pitch, t: .15 });
     const fx = Math.cos(p.heading), fz = Math.sin(p.heading);
     for (const z of zombies) {
@@ -1170,7 +1325,7 @@ function fire() {
     return;
   }
   if (p.mag[p.weapon] <= 0) { if (!startReload()) { p.cool = .25; sfx('click', 200); } return; }
-  p.mag[p.weapon]--; p.cool = w.rate * rateMul; stats.shots += w.pellets || 1;
+  p.mag[p.weapon]--; p.cool = w.rate * rateMul; stats.shots += w.pellets || 1; p.shotT = .18;
   const [mx, my, mz] = muzzlePoint(p), eye = camera.position;
   camera.getWorldDirection(_cd); const dx_ = _cd.x, dy_ = _cd.y, dz_ = _cd.z;
   const spread = (w.spread + p.heat) * lerp(1, .3, p.adsT), dmg = weaponDamage(w, up.dmg, false);
@@ -1218,7 +1373,7 @@ function explode(x, z) {
   for (const r of rags) {
     if (r.sink) continue;
     const d = Math.hypot(r.x - x, r.z - z);
-    if (d < R) { wake(r); const k = 1 - d / R; for (let i = 0; i < 15; i++) { const ddx = r.P[i * 3] - x, ddz = r.P[i * 3 + 2] - z, l = Math.hypot(ddx, ddz) || 1; r.O[i * 3] -= ddx / l * 5 * k * STEP; r.O[i * 3 + 1] -= 4.5 * k * STEP * rnd(.5, 1.2); r.O[i * 3 + 2] -= ddz / l * 5 * k * STEP; } }
+    if (d < R) { wake(r); const k = 1 - d / R; for (let i = 0; i < 15; i++) { const ddx = r.P[i * 3] - x, ddz = r.P[i * 3 + 2] - z, l = Math.hypot(ddx, ddz) || 1; r.O[i * 3] -= ddx / l * 5 * k * r.dtp; r.O[i * 3 + 1] -= 4.5 * k * r.dtp * rnd(.5, 1.2); r.O[i * 3 + 2] -= ddz / l * 5 * k * r.dtp; } }
   }
   const FIRE3 = ['#fff3b0', '#ffc040', '#ff7a20', '#d84010'].map(hex3), SMK = ['#3a3530', '#4a4540', '#2a2622'].map(hex3), DIRT = ['#4a3626', '#5a4430', '#2e2218'];
   for (let i = 0; i < 46; i++) spawnP(T.FIRE, x + rnd(-.3, .3), rnd(.05, .6), z + rnd(-.3, .3), rnd(-2.5, 2.5), rnd(.3, 3.5), rnd(-2.5, 2.5), pick(FIRE3), '', rnd(.12, .26), rnd(.2, .6));
@@ -1254,10 +1409,10 @@ const isHorde = (li, w) => LEVELS[li].waves === Infinity ? w % 5 === 0 : w === L
 function waveCount(li, w) { return Math.round((CONFIG.waveBase + (li * 3 + w) * CONFIG.wavePerDiff) * (isHorde(li, w) ? CONFIG.hordeMul : 1)); }
 function waveSpec(li, w) {
   const Lv = LEVELS[li], d = li * 3 + w, horde = isHorde(li, w), n = waveCount(li, w), list = [], m = Lv.mix, ramp = Math.min(1, .4 + w * .15);
-  const pb = (m.brute || 0) * ramp, pr = m.runner * ramp, pc = m.crawler * ramp, ps = m.spitter * ramp;
+  const pb = (m.brute || 0) * ramp, pr = m.runner * ramp, pc = m.crawler * ramp, ps = m.spitter * ramp, pg = (m.gunner || 0) * ramp;
   for (let i = 0; i < n; i++) {
     const r = Math.random();
-    list.push(r < pb ? 'brute' : r < pb + pr ? 'runner' : r < pb + pr + pc ? 'crawler' : r < pb + pr + pc + ps ? 'spitter' : 'walker');
+    list.push(r < pb ? 'brute' : r < pb + pr ? 'runner' : r < pb + pr + pc ? 'crawler' : r < pb + pr + pc + ps ? 'spitter' : r < pb + pr + pc + ps + pg ? 'gunner' : 'walker');
   }
   const brutes = horde ? 1 + (li >> 1) + (Lv.waves === Infinity ? Math.floor(w / 10) : 0) : 0;
   for (let i = 0; i < brutes; i++) list.splice(Math.floor(list.length * (i + 1) / (brutes + 1)), 0, 'brute');
@@ -1266,13 +1421,15 @@ function waveSpec(li, w) {
 function startWave() {
   wave.timer = 30 + (wave.n + 1) * 5;
   wave.n++; wave.spec = waveSpec(lvl, wave.n); wave.queue = wave.spec.list.slice(); wave.phase = 'countdown'; wave.t = 2.6;
-  msg = { text: 'WAVE ' + wave.n, sub: wave.spec.horde ? 'HORDE INCOMING' : L.name, t: 2.4 }; sfx('blip');
+  msg = { text: 'WAVE ' + wave.n, sub: wave.spec.horde ? 'HORDE INCOMING' : wave.n === 1 ? 'TIME MOVES ONLY WHEN YOU MOVE' : L.name, t: wave.n === 1 ? 3.4 : 2.4 }; sfx('blip');
 }
-function spawnFromSide(type) { // zombies claw out of the road around the player, mostly from the far end
-  const p = player, side = Math.random() < wave.spec.flank ? -1 : 1;
-  let x = clamp(p.x + side * rnd(8, 16), .5, WORLD_L - .5);
-  if (Math.abs(x - p.x) < 5) x = clamp(p.x - side * rnd(8, 16), .5, WORLD_L - .5);
-  const z = newZombie(type, x); for (let k = 0; k < 8 && inBox(x, z.z, .45); k++) z.z = rnd(Z_MIN, Z_MAX);
+function spawnFromSide(type) { // zombies claw out of the road around the player, mostly from further down the road
+  const p = player; let x, zz, k = 0;
+  do {
+    const a = Math.random() < wave.spec.flank + .2 ? rnd(0, 6.283) : rnd(-1.1, 1.1), d = rnd(10, 20);
+    x = clamp(p.x + Math.cos(a) * d, 1, WORLD_L - 1); zz = clamp(p.z + Math.sin(a) * d, Z_MIN, Z_MAX);
+  } while ((inBox(x, zz, .45) || Math.hypot(x - p.x, zz - p.z) < 7) && ++k < 16);
+  const z = newZombie(type, x, zz);
   const g = Math.random(); z.goal = L.obj === 'hold' && g < .5 ? 'zone' : L.obj === 'protect' && g < .45 ? 'truck' : 'player';
   z.heading = Math.atan2(p.z - z.z, p.x - x); z.rise = 1.2; zombies.push(z);
   for (let i = 0; i < 8; i++) { const c = pick(['#4a3626', '#5a4430']); spawnP(T.CHUNK, x, .05, z.z, rnd(-1.5, 1.5), rnd(1.5, 3.5), rnd(-1.5, 1.5), hex3(c), c, .06, 2); }
@@ -1326,9 +1483,10 @@ function shopItems() {
     { label: 'SANDBAGS', ...def('sandbags') },
   ];
 }
-function placeDefense(x) {
+const DEF_HALF = 3; // defenses are 6 m sections across the road
+function placeDefense(x, z) {
   const D = CONFIG.defenses[placing];
-  defenses.push({ type: placing, x: clamp(x, 1, WORLD_L - 1), hp: D.hp, max: D.hp });
+  defenses.push({ type: placing, x: clamp(x, 1, WORLD_L - 1), z: clamp(z, Z_MIN + DEF_HALF - 1, Z_MAX - DEF_HALF + 1), hp: D.hp, max: D.hp });
   placing = null; state = 'shop'; sfx('impact');
 }
 
@@ -1375,7 +1533,7 @@ function updPlayer(dt) {
   if (k.KeyD || k.ArrowRight) s += 1; if (k.KeyA || k.ArrowLeft) s -= 1;
   if (input.joy) { s += clamp((input.joy.x - input.joy.cx) / 22, -1, 1); f -= clamp((input.joy.y - input.joy.cy) / 22, -1, 1); }
   const m = Math.hypot(f, s); if (m > 1) { f /= m; s /= m; }
-  p.moving = m > .15;
+  p.moving = m > .15; p.moveAmt = m > .15 ? Math.min(1, m) : 0; p.strafe = s;
   const wantSprint = (k.ShiftLeft || k.ShiftRight || (input.joy && f > .9)) && f > .3 && !input.ads && p.reloadT <= 0;
   p.sprint = wantSprint && (p.sprint ? p.stamina > 0 : p.stamina > 15);
   if (p.sprint) { p.stamina = Math.max(0, p.stamina - M.drain * dt); p.staminaT = .6; } else if ((p.staminaT -= dt) <= 0) p.stamina = Math.min(M.stamina, p.stamina + M.regen * dt);
@@ -1394,7 +1552,8 @@ function updPlayer(dt) {
   if (input.touch && held) { const t = nearestZombie(); if (t) { const a = Math.atan2(t.z - p.z, t.x - p.x); if (Math.abs(turnTo(0, a - p.heading, 9)) < .3) p.heading = turnTo(p.heading, a, dt * 2.5); } }
   p.kick = Math.max(0, p.kick - dt * 5);
   p.recoil = Math.max(0, p.recoil - dt * 9); p.cool -= dt; p.inv -= dt; p.swing = Math.max(0, p.swing - dt * 4); p.nadeCd -= dt; p.throwT = Math.max(0, p.throwT - dt * 4);
-  p.swapT = Math.max(0, p.swapT - dt); p.meleeT = Math.max(0, p.meleeT - dt); p.meleeCd -= dt;
+  p.swapT = Math.max(0, p.swapT - dt); p.meleeT = Math.max(0, p.meleeT - dt); p.meleeCd -= dt; p.shotT = Math.max(0, p.shotT - dt);
+  const sw = Math.min(1, dt * 9); p.swayX -= p.swayX * sw; p.swayY -= p.swayY * sw; p.roll += ((p.strafe || 0) * -.022 * (p.sprint ? 1.6 : 1) - p.roll) * Math.min(1, dt * 6);
   placeCamera(); p.aimT = aimPoint(W / 2, H / 2);
   p.heat = Math.max(0, p.heat - dt * (w.spreadMax ? .12 : 1));
   if (p.reloadT > 0) { p.reloadT -= dt; if (p.reloadT <= 0) finishReload(); }
@@ -1465,13 +1624,21 @@ function updCamera(dt) {
   cam.x = clamp(cam.x + (t - cam.x) * Math.min(1, dt * 4), CAM.half, WORLD_L - CAM.half);
   cam.kx *= .8;
 }
+const MIN_TS = .01;
+function timeTarget(dt) { // how fast the world should run this step
+  const p = player, lr = input.lookAmt / Math.max(dt, 1e-3); input.lookAmt = 0;
+  const threat = zombies.some(z => !z.dead) || projs.some(q => q.kind !== 'nade');
+  if (state !== 'play' || !p.alive || !threat || wave.phase !== 'spawn') return 1;
+  return Math.max(MIN_TS, p.moveAmt, Math.min(.45, lr / 1800), p.shotT > 0 ? 1 : 0, p.meleeT > 0 || p.throwT > 0 ? 1 : 0, p.reloadT > 0 || p.swapT > 0 ? .3 : 0);
+}
+const stepTimeScale = (cur, target, dt) => cur + (target - cur) * Math.min(1, dt * (target > cur ? 14 : 5)); // speeds up fast, settles slower
 function update(dt) {
   time += dt;
   updMusic();
   fade = Math.max(0, fade - dt * 2.5); hitMark = Math.max(0, hitMark - dt);
   muzzleLight.intensity *= Math.pow(.0005, dt); boomLight.intensity *= Math.pow(.002, dt); boomT = Math.max(0, boomT - dt);
   if (state === 'title' || state === 'levels') { // menu backdrop: zombies shamble past
-    for (const z of zombies) { z.heading = Math.PI; z.x -= z.cfg.speed * dt; z.phase += dt * z.cfg.speed * 7.7; poseZombie(z); if (z.x < cam.x - CAM.half - 1.5) z.x = cam.x + CAM.half + rnd(1, 6); }
+    wtime += dt; for (const z of zombies) { z.heading = Math.PI; z.x -= z.cfg.speed * dt; z.phase += dt * z.cfg.speed * 7.7; poseZombie(z); if (z.x < cam.x - CAM.half - 1.5) z.x = cam.x + CAM.half + rnd(1, 6); }
     return;
   }
   if (state === 'play' && portrait()) { state = 'pause'; return; }
@@ -1482,8 +1649,9 @@ function update(dt) {
   if (streakShow && (streakShow.t -= dt) <= 0) streakShow = null;
   updPlayer(dt);
   updCamera(dt);
+  ts = stepTimeScale(ts, timeTarget(dt), dt); const rdt = dt; dt = wdt = rdt * ts; wtime += dt; // from here on the world runs on its own clock
   if (state === 'play') updWave(dt);
-  for (let i = zombies.length - 1; i >= 0; i--) { const z = zombies[i]; if (!z.dead) updZombie(z, dt); if (z.dead) zombies.splice(i, 1); }
+  for (let i = zombies.length - 1; i >= 0; i--) { const z = zombies[i]; z.hitT -= rdt; if (!z.dead) updZombie(z, dt); if (z.dead) zombies.splice(i, 1); }
   for (let i = 0; i < zombies.length; i++) for (let j = i + 1; j < zombies.length; j++) {
     const a = zombies[i], b = zombies[j], dx_ = a.x - b.x, dz_ = a.z - b.z, d2 = dx_ * dx_ + dz_ * dz_, r = .42 * (a.s + b.s) / 2;
     if (d2 < r * r && d2 > 1e-6) { const d = Math.sqrt(d2), f = (r - d) / d * .5 * Math.min(1, dt * 10); a.x += dx_ * f; a.z = clamp(a.z + dz_ * f, Z_MIN, Z_MAX); b.x -= dx_ * f; b.z = clamp(b.z - dz_ * f, Z_MIN, Z_MAX); }
@@ -1492,21 +1660,22 @@ function update(dt) {
     const r = rags[i];
     r.age += dt;
     if (r.sink) { r.sink -= dt; for (let j = 1; j < 45; j += 3) r.P[j] -= dt * .5; if (r.sink <= 0) { releaseRig(r.rig); rags.splice(i, 1); } continue; }
-    for (const sp of r.spurts) if (sp.t > 0) { sp.t -= dt; if (Math.random() < .7) { const c = rnd(0, BLOOD3.length) | 0; spawnP(T.BLOOD, r.P[sp.i * 3], r.P[sp.i * 3 + 1], r.P[sp.i * 3 + 2], rnd(-1, 1), rnd(.8, 2.4), rnd(-1, 1), BLOOD3[c], BLOOD_CSS[c], .04, 3); } }
-    if (r.age < 4 && Math.random() < .3) { const rr = r.age * .12 * r.s, a = rnd(0, 6.283); paint(r.x + Math.cos(a) * rr, r.z + Math.sin(a) * rr, 2, 1, pick(BLOOD_CSS)); }
+    for (const sp of r.spurts) if (sp.t > 0) { sp.t -= dt; if (Math.random() < .7 * ts) { const c = rnd(0, BLOOD3.length) | 0; spawnP(T.BLOOD, r.P[sp.i * 3], r.P[sp.i * 3 + 1], r.P[sp.i * 3 + 2], rnd(-1, 1), rnd(.8, 2.4), rnd(-1, 1), BLOOD3[c], BLOOD_CSS[c], .04, 3); } }
+    if (r.age < 4 && Math.random() < .3 * ts) { const rr = r.age * .12 * r.s, a = rnd(0, 6.283); paint(r.x + Math.cos(a) * rr, r.z + Math.sin(a) * rr, 2, 1, pick(BLOOD_CSS)); }
     if (r.sleep) continue;
     const v = stepRag(r, dt, rags);
     r.still = v < .0015 ? r.still + 1 : 0;
     if (r.still > 45 && r.spurts.every(s => s.t <= 0)) r.sleep = true;
   }
   for (let i = projs.length - 1; i >= 0; i--) {
-    const q = projs[i]; q.t += dt; q.vy -= CONFIG.gravity * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
-    if (q.kind === 'nade') {
+    const q = projs[i]; q.t += dt; if (q.kind !== 'bullet') q.vy -= CONFIG.gravity * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
+    if (q.kind === 'bullet') { if (updBullet(q, dt)) projs.splice(i, 1); }
+    else if (q.kind === 'nade') {
       if (q.y <= .05) { q.y = .05; if (q.vy < -1.5) { q.vy = -q.vy * .35; q.vx *= .55; q.vz *= .55; } else { q.vy = 0; q.vx *= .9; q.vz *= .9; } }
       if (q.z < Z_WALL + .1) { q.z = Z_WALL + .1; q.vz = -q.vz * .4; } else if (q.z > Z_WALL2 - .1) { q.z = Z_WALL2 - .1; q.vz = -q.vz * .4; }
       const gb = inBox(q.x, q.z, .05);
       if (gb && q.y < gb.h) { if (q.y - q.vy * dt >= gb.h - .03) { q.y = gb.h; q.vy = Math.abs(q.vy) * .35; q.vx *= .6; q.vz *= .6; } else { q.x -= q.vx * dt; q.z -= q.vz * dt; q.vx *= -.4; q.vz *= -.4; } }
-      if (Math.random() < .5) spawnP(T.SMOKE, q.x, q.y + .05, q.z, 0, .4, 0, hex3('#bdbdbd'), '', .05, .5);
+      if (Math.random() < .5 * ts) spawnP(T.SMOKE, q.x, q.y + .05, q.z, 0, .4, 0, hex3('#bdbdbd'), '', .05, .5);
       if (q.t >= CONFIG.grenade.fuse) { explode(q.x, q.z); projs.splice(i, 1); }
     } else if (q.y <= 0) {
       const p = player;
@@ -1514,26 +1683,26 @@ function update(dt) {
       for (let j = 0; j < 10; j++) spawnP(T.ACID, q.x, .02, q.z, rnd(-1.5, 1.5), rnd(.5, 2), rnd(-1.5, 1.5), pick([hex3('#9be22a'), hex3('#6fae18')]), '#7fc020', .04, 2);
       spawnP(T.MIST, q.x, .1, q.z, 0, .3, 0, hex3('#7fc020'), '', .3, .5);
       projs.splice(i, 1);
-    } else if (Math.random() < .5) spawnP(T.MIST, q.x, q.y, q.z, 0, 0, 0, hex3('#7fc020'), '', .08, .25);
+    } else if (Math.random() < .5 * ts) spawnP(T.MIST, q.x, q.y, q.z, 0, 0, 0, hex3('#7fc020'), '', .08, .25);
   }
   updParts(dt);
   for (let i = defenses.length - 1; i >= 0; i--) {
     const d = defenses[i];
     if (d.hp <= 0) {
       const c = d.type === 'sandbags' ? '#9a8458' : '#777777';
-      for (let j = 0; j < 20; j++) spawnP(T.CHUNK, d.x, rnd(.1, .5), rnd(Z_MIN, Z_MAX), rnd(-2, 2), rnd(1, 3), rnd(-1, 1), hex3(c), c, .07, 2);
+      for (let j = 0; j < 20; j++) spawnP(T.CHUNK, d.x, rnd(.1, .5), d.z + rnd(-DEF_HALF, DEF_HALF), rnd(-2, 2), rnd(1, 3), rnd(-1, 1), hex3(c), c, .07, 2);
       defenses.splice(i, 1); sfx('impact');
     }
   }
   for (let i = drops.length - 1; i >= 0; i--) if ((drops[i].t -= dt) <= 0) drops.splice(i, 1);
   for (let i = tracers.length - 1; i >= 0; i--) if ((tracers[i].t -= dt) <= 0) tracers.splice(i, 1);
-  for (let i = arcs.length - 1; i >= 0; i--) if ((arcs[i].t -= dt) <= 0) arcs.splice(i, 1);
+  for (let i = arcs.length - 1; i >= 0; i--) if ((arcs[i].t -= rdt) <= 0) arcs.splice(i, 1);
   for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t -= dt) <= 0) rings.splice(i, 1);
-  for (let i = pops.length - 1; i >= 0; i--) { pops[i].t -= dt; pops[i].y += dt * .5; if (pops[i].t <= 0) pops.splice(i, 1); }
-  if (msg && (msg.t -= dt) <= 0) msg = null;
-  shake = shake > .1 ? shake * Math.pow(.0004, dt) : 0;
-  hurtFlash = Math.max(0, hurtFlash - dt); screenFlash = Math.max(0, screenFlash - dt * 3);
-  for (let i = hurtDirs.length - 1; i >= 0; i--) if ((hurtDirs[i].t -= dt) <= 0) hurtDirs.splice(i, 1);
+  for (let i = pops.length - 1; i >= 0; i--) { pops[i].t -= rdt; pops[i].y += rdt * .5; if (pops[i].t <= 0) pops.splice(i, 1); }
+  if (msg && (msg.t -= rdt) <= 0) msg = null;
+  shake = shake > .1 ? shake * Math.pow(.0004, rdt) : 0;
+  hurtFlash = Math.max(0, hurtFlash - rdt); screenFlash = Math.max(0, screenFlash - rdt * 3);
+  for (let i = hurtDirs.length - 1; i >= 0; i--) if ((hurtDirs[i].t -= rdt) <= 0) hurtDirs.splice(i, 1);
   if (zombies.length && Math.random() < dt * .35 * Math.min(zombies.length, 6) / 6) { const z = pick(zombies); sfxAt('groan', z.x, z.z, 700); }
   updObjective(dt);
 }
@@ -1604,30 +1773,49 @@ function drawRigged(e, white) { // textured human skin posed from the skeleton; 
     for (const sd of [-1, 1]) box(glow, _a3.x + _tup.x * .08 * s + _tfw.x * .09 * s + _side.x * .032 * sd * s, _a3.y + _tup.y * .08 * s + _tfw.y * .09 * s, _a3.z + _tup.z * .08 * s + _tfw.z * .09 * s + _side.z * .032 * sd * s, .035 * s, .035 * s, 1, ec, IDQ, .8);
   }
 }
-const _gq = new THREE.Quaternion(), _gm = new THREE.Matrix4();
-const VM_SKIN = C3(PLAYER_PAL_SKIN, .72), VM_SLEEVE = C3([86, 92, 70]), VM_GLOVE = C3([30, 30, 28]); // arms sit inches from the lens: darker reads as normal skin
-const WOOD = new Set(['#6b4a2a', '#4a3a26', '#3a3328', '#2d3a1a']);
+const _gq = new THREE.Quaternion(), _gm = new THREE.Matrix4(), _pq3 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _zAx = new THREE.Vector3(0, 0, 1), _mm = new THREE.Matrix4(), _mp = new THREE.Vector3(), _ms = new THREE.Vector3();
+const VM_SLEEVE = C3([70, 76, 58]), VM_CUFF = C3([40, 42, 34]), VM_GLOVE = C3([34, 32, 30]);
 function drawGun3D(p) {
-  const [gx, gy, gz] = viewGrip(p), S = VM_S;
+  const [gx, gy, gz] = viewGrip(p), G = GUN3D[p.weapon];
   _gm.makeBasis(GX, GY, GZ); _gq.setFromRotationMatrix(_gm);
-  for (const r of GUNS[p.weapon]) { // steel parts are metallic, stocks and grips are not
-    const cx = (r[0] + r[2] / 2) * S, cy = -(r[1] + r[3] / 2) * S;
-    box(WOOD.has(r[4]) ? solid : metal, gx + GX.x * cx + GY.x * cy, gy + GX.y * cx + GY.y * cy, gz + GX.z * cx + GY.z * cy, r[2] * S, r[3] * S, (r[3] > 2 ? 2 : 1.4) * S, hex3(r[4]), _gq);
+  const at = (x, y, z = 0) => [gx + GX.x * x + GY.x * y + GZ.x * z, gy + GX.y * x + GY.y * y + GZ.y * z, gz + GX.z * x + GY.z * y + GZ.z * z];
+  if (MODELS.ready && G.model) { const [x, y, z] = at(G.modelX || 0, 0); putModel(MI[G.model], _mp.set(x, y, z), _gq, 1); }
+  else for (const [sh, x, y, z, sx, sy, sz, col, mt, rz] of G.parts) {
+    const [wx, wy, wz] = at(x, y, z), cyl = sh === 'c', tilt = (rz || 0) - (cyl ? Math.PI / 2 : 0);
+    const q = tilt ? _q3.copy(_gq).multiply(_pq3.setFromAxisAngle(_zAx, tilt)) : _gq;
+    if (cyl) box(cyls, wx, wy, wz, sy, sx, sy, col, q); else box(mt === 'm' ? metal : solid, wx, wy, wz, sx, sy, sz, col, q);
   }
-  // arms: gloved hands on the gun, forearms and sleeves running out of the bottom of the screen
+  // arms: gloved hands on the gun, sleeves running out of the bottom of the screen
   const c = camera.position, arm = (hx, hy, hz, dz) => {
-    const ex = c.x + GX.x * .12 - GY.x * .45 + GZ.x * dz, ey = c.y - .45, ez = c.z + GX.z * .12 - GY.z * .45 + GZ.z * dz;
-    const mx = lerp(hx, ex, .45), my = lerp(hy, ey, .45), mz = lerp(hz, ez, .45);
-    line3(limbs, hx, hy, hz, mx, my, mz, .06, VM_SKIN); line3(limbs, mx, my, mz, ex, ey, ez, .085, VM_SLEEVE);
-    box(balls, hx, hy, hz, .065, .055, .07, VM_GLOVE);
+    const ex = c.x + GX.x * .1 - GY.x * .5 + GZ.x * dz, ey = c.y - .5, ez = c.z + GX.z * .1 - GY.z * .5 + GZ.z * dz;
+    const wx = lerp(hx, ex, .14), wy = lerp(hy, ey, .14), wz = lerp(hz, ez, .14);
+    box(balls, hx, hy, hz, .07, .06, .075, VM_GLOVE); line3(limbs, hx, hy, hz, wx, wy, wz, .055, VM_GLOVE);
+    line3(limbs, wx, wy, wz, lerp(wx, ex, .12), lerp(wy, ey, .12), lerp(wz, ez, .12), .075, VM_CUFF); line3(limbs, lerp(wx, ex, .1), lerp(wy, ey, .1), lerp(wz, ez, .1), ex, ey, ez, .085, VM_SLEEVE);
   };
-  arm(gx, gy - .01, gz, .24);
-  if (p.weapon === 'rifle' || p.weapon === 'shotgun' || p.weapon === 'smg' || p.weapon === 'sniper') { const k = 9 * S; arm(gx + GX.x * k, gy + GX.y * k - .01, gz + GX.z * k, -.05); }
+  { const [x, y, z] = at(-.015, -.035); arm(x, y, z, .26); }
+  if (G.left) { const [x, y, z] = at(G.left[0], G.left[1] - .02, -.005); arm(x, y, z, -.06); }
+}
+const _zq = new THREE.Quaternion(), _ze = new THREE.Euler(0, 0, 0, 'YZX');
+function drawZombieGun(z) { // a pistol held out in both hands, aimed at the player
+  if (z.missing === 1 || (z.cut && z.cut['6-7'])) return;
+  const p = player, hx = (z.P[LHA * 3] + z.P[RHA * 3]) / 2, hy = (z.P[LHA * 3 + 1] + z.P[RHA * 3 + 1]) / 2, hz = (z.P[LHA * 3 + 2] + z.P[RHA * 3 + 2]) / 2;
+  const pitch = Math.atan2(1.3 - hy, Math.hypot(p.x - hx, p.z - hz)) * (z.burst > 0 || z.los ? 1 : 0) - (z.los ? 0 : .5);
+  _ze.set(0, -z.heading, pitch); _zq.setFromEuler(_ze);
+  const f = Math.cos(z.heading), g = Math.sin(z.heading), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  if (!drawModelGun(z, hx, hy, hz, _zq)) {
+    box(metal, hx + f * .06 * cp, hy + .03 + sp * .06, hz + g * .06 * cp, .2, .035, .03, GUNMETAL, _zq);
+    box(metal, hx - f * .01, hy - .03, hz - g * .01, .035, .08, .028, GUNMETAL, _zq);
+  }
+  if (z.flashT > 0) box(glow, hx + f * .2 * cp, hy + .03 + sp * .2, hz + g * .2 * cp, .22, .22, 1, FLASH, IDQ, 2);
+}
+function drawModelGun(z, hx, hy, hz, q) { // the scanned pistol, once it is loaded
+  if (!MODELS.ready) return false;
+  putModel(MI.pistol, _mp.set(hx, hy, hz), q, 1.1 * z.s); return true;
 }
 const DEF_C = { post: hex3('#4a3a28'), wire: hex3('#9a9a9a'), plank: hex3('#3a2c1c'), spike: hex3('#8a8a8a'), bagD: hex3('#7e6e4e'), bag: hex3('#a89468') };
 const Q45 = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 4, 0, Math.PI / 4));
 function drawDefense(d, ghost) {
-  const k = ghost ? .6 : .55 + .45 * d.hp / d.max, z0 = Z_MIN - .4, z1 = Z_MAX + .4;
+  const k = ghost ? .6 : .55 + .45 * d.hp / d.max, z0 = d.z - DEF_HALF, z1 = d.z + DEF_HALF;
   if (d.type === 'wire') {
     for (let z = z0; z <= z1; z += .9) box(solid, d.x, .32, z, .06, .64, .06, DEF_C.post, IDQ, k);
     for (let z = z0; z <= z1; z += .05) { const a = z * 9; box(metal, d.x + Math.cos(a) * .2, .32 + Math.sin(a) * .2, z, .02, .02, .05, DEF_C.wire, IDQ, k); }
@@ -1640,15 +1828,16 @@ function drawDefense(d, ghost) {
 }
 const DROP_C = { ammo: hex3('#4a5a2c'), band: hex3('#d8b040'), med: hex3('#e8e8e0'), red: hex3('#c02020'), nade: hex3('#3c5a2a') };
 const _dq = new THREE.Quaternion(), _ax = new THREE.Vector3(0, 1, 0);
-const TRACER = hex3('#ffe2a0'), FLASH = hex3('#fff2c0'), FLASH2 = hex3('#ffa040'), RING = hex3('#ffd090'), WHITE_GLOW = hex3('#ffffff');
+const ZTRACER = hex3('#ff8a3a'), GUNMETAL = hex3('#2a2a2c'), TRACER = hex3('#ffe2a0'), FLASH = hex3('#fff2c0'), FLASH2 = hex3('#ffa040'), RING = hex3('#ffd090'), WHITE_GLOW = hex3('#ffffff');
 function render3D() {
   placeCamera();
   for (const m of DYN) m.count = 0;
+  if (MODELS.ready) for (const k of MODEL_DYN) for (const m of MI[k]) m.count = 0;
   for (const e of zombies) if (e.rig) e.rig.root.visible = false; // only rigs drawn this frame stay visible
   for (const r of rags) if (r.rig) r.rig.root.visible = false;
-  const fps = fpsView(), cx0 = fps ? player.x : cam.x, vis = x => Math.abs(x - cx0) < (fps ? 40 : CAM.half + 3);
-  for (const z of zombies) if (!z.dead && vis(z.x)) drawBody(z, z.hitT > 0);
-  for (const r of rags) if (vis(r.x)) drawBody(r, false);
+  const fps = fpsView(), cx0 = fps ? player.x : cam.x, cz0 = fps ? player.z : CAM.z, vis = (x, z = cz0) => fps ? (x - cx0) ** 2 + (z - cz0) ** 2 < 2000 : Math.abs(x - cx0) < CAM.half + 3;
+  for (const z of zombies) if (!z.dead && vis(z.x, z.z)) { drawBody(z, z.hitT > 0); if (z.type === 'gunner') drawZombieGun(z); }
+  for (const r of rags) if (vis(r.x, r.z)) drawBody(r, false);
   if (fps && player.alive && !scoped(player)) drawGun3D(player);
   const tr = objective.truck;
   if (tr && vis(tr.x)) { // convoy truck darkens as it takes damage
@@ -1660,19 +1849,24 @@ function render3D() {
   if (fps && L.obj === 'hold') {
     const o = objective, col = o.contested ? hex3('#ff3020') : hex3('#9fe870');
     for (let i = 0; i < 48; i++) { const a = i / 48 * 6.283 + time * .3; box(glow, o.x + Math.cos(a) * o.r, .05, o.z + Math.sin(a) * o.r, .2, .2, 1, col, IDQ, .5 + .3 * Math.sin(time * 5)); }
-    if (Math.sin(time * 4) > 0) box(glow, 22.15, 2.55, 0, .3, .3, 1, col, IDQ, 1.5);
+    if (Math.sin(time * 4) > 0) box(glow, OBJ_X + .15, 2.55, 0, .3, .3, 1, col, IDQ, 1.5);
   }
   for (const d of defenses) if (vis(d.x)) drawDefense(d, false);
-  if (state === 'place') { const gp = groundAt(input.mx, input.my); if (gp) drawDefense({ type: placing, x: clamp(gp.x, 1, WORLD_L - 1), hp: 1, max: 1 }, true); }
+  if (state === 'place') { const gp = groundAt(input.mx, input.my); if (gp) drawDefense({ type: placing, x: clamp(gp.x, 1, WORLD_L - 1), z: clamp(gp.z, Z_MIN + DEF_HALF - 1, Z_MAX - DEF_HALF + 1), hp: 1, max: 1 }, true); }
   for (const d of drops) {
-    if (!vis(d.x) || (d.t < 3 && (time * 8 | 0) % 2)) continue;
+    if (!vis(d.x, d.z) || (d.t < 3 && (time * 8 | 0) % 2)) continue;
     _dq.setFromAxisAngle(_ax, time * 2 + d.x); const y = .22 + Math.abs(Math.sin(time * 4 + d.x)) * .1;
-    if (d.type === 'ammo') { box(solid, d.x, y, d.z, .36, .24, .24, DROP_C.ammo, _dq); box(metal, d.x, y + .03, d.z, .37, .06, .25, DROP_C.band, _dq); }
+    if (MODELS.ready && d.type !== 'nade') putModel(MI[d.type], _op.set(d.x, y - .1, d.z), _dq, d.type === 'ammo' ? 1.7 : .75);
+    else if (d.type === 'ammo') { box(solid, d.x, y, d.z, .36, .24, .24, DROP_C.ammo, _dq); box(metal, d.x, y + .03, d.z, .37, .06, .25, DROP_C.band, _dq); }
     else if (d.type === 'med') { box(solid, d.x, y, d.z, .34, .26, .26, DROP_C.med, _dq); box(solid, d.x, y, d.z, .35, .06, .2, DROP_C.red, _dq); box(solid, d.x, y, d.z, .35, .2, .06, DROP_C.red, _dq); }
     else box(cyls, d.x, y, d.z, .14, .2, .14, DROP_C.nade, _dq);
     box(glow, d.x, .05, d.z, .7, .7, 1, DROP_C.band, IDQ, .2 + .1 * Math.sin(time * 6));
   }
-  for (const q of projs) { if (q.kind === 'nade') box(cyls, q.x, q.y, q.z, .09, .12, .09, DROP_C.nade); else box(glow, q.x, q.y, q.z, .3, .3, 1, EYE_SP); }
+  for (const q of projs) {
+    if (q.kind === 'nade') box(cyls, q.x, q.y, q.z, .09, .12, .09, DROP_C.nade);
+    else if (q.kind === 'bullet') { const k = .035; line3(beam, q.x - q.vx * k, q.y - q.vy * k, q.z - q.vz * k, q.x, q.y, q.z, .014, ZTRACER, 2.2); box(glow, q.x, q.y, q.z, .14, .14, 1, ZTRACER, IDQ, 1.4); }
+    else box(glow, q.x, q.y, q.z, .3, .3, 1, EYE_SP);
+  }
   for (let i = 0; i < nParts; i++) {
     const q = PARTS[i], kd = KIND[q.type], f = Math.max(0, q.life / q.max);
     if (kd === 'solid') { if (q.type === T.CASING) box(metal, q.x, q.y + .01, q.z, .024, .01, .01, q.col); else box(balls, q.x, q.y + q.size / 2, q.z, q.size, q.size * .8, q.size, q.col); }
@@ -1694,16 +1888,18 @@ function render3D() {
     const k = r.t / .35, rad = .2 + (1 - k) * CONFIG.grenade.radius * 1.1;
     for (let i = 0; i < 32; i++) { const a = i / 32 * 6.283; box(glow, r.x + Math.cos(a) * rad, .1, r.z + Math.sin(a) * rad, .5, .5, 1, RING, IDQ, k * 1.5); }
   }
-  for (let x = ROAD_X0 + 1.2; x < ROAD_X0 + ROAD_LEN; x += 2.4) { if (!vis(x)) continue; if (Math.sin(time * 2 + x * .7) > 0) box(glow, x, .3, Z_WALL + .03, .12, .12, 1, C3(L.pal.light), IDQ, 1.2); }
+  const blink = C3(L.pal.light); for (let x = ROAD_X0 + 1.2; x < ROAD_X0 + ROAD_LEN; x += 2.4) for (const wz of [Z_WALL + .03, Z_WALL2 - .03]) { if (!vis(x, wz)) continue; if (Math.sin(time * 2 + x * .7 + wz) > 0) box(glow, x, .3, wz, .12, .12, 1, blink, IDQ, 1.2); }
   for (const m of DYN) { m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; }
+  if (MODELS.ready) for (const k of MODEL_DYN) for (const m of MI[k]) m.instanceMatrix.needsUpdate = true;
   if (decalDirty && frameNo % 3 === 0) { decalTex.needsUpdate = true; decalDirty = false; }
   // lamps: the three nearest get real lights on dark levels
-  const near = LAMPS.slice().sort((a, b) => Math.abs(a - cx0) - Math.abs(b - cx0));
-  lampLights.forEach((l, i) => { const x = near[i] ?? -100; l.position.set(x + .75, 4, Z_WALL + .9); });
+  const near = LAMPS.slice().sort((a, b) => Math.hypot(a.x - cx0, a.z - cz0) - Math.hypot(b.x - cx0, b.z - cz0));
+  lampLights.forEach((l, i) => { const lp = near[i]; if (lp) l.position.set(lp.x, 4.8, lp.z); else l.position.set(-100, 4, 0); });
   const gu = grade.uniforms, menu = state === 'title' || state === 'levels' || state === 'over' || state === 'levelclear';
   gu.time.value = time % 100; const nowR = performance.now(), dtR = Math.min(.25, (nowR - (render3D.lt ?? nowR)) / 1000); render3D.lt = nowR; gu.bars.value = lerp(gu.bars.value, menu ? 1 : 0, 1 - Math.exp(-dtR * 5));
   const turn = Math.abs(turnTo(0, player.heading - (render3D.lastH ?? player.heading), 9)); render3D.lastH = player.heading;
-  gu.blur.value = fps ? clamp(turn * .35 + (player.sprint ? .006 : 0), 0, .03) : 0; gu.ca.value = .006 + hurtFlash * .03;
+  gu.blur.value = fps ? clamp(turn * .35 + (player.sprint ? .006 : 0), 0, .03) : 0; gu.ca.value = .006 + hurtFlash * .03 + gu.slow.value * .004;
+  gu.slow.value = state === 'play' ? 1 - Math.sqrt(ts) : 0;
   bokeh.enabled = qLevel === 0 && (menu || player.adsT > .3); // depth of field: aiming focuses on the target, menus on the street
   if (bokeh.enabled) bokeh.uniforms.focus.value = menu ? 7 : Math.max(1, camera.position.distanceTo(_a3.set(player.aimT.x, player.aimT.y, player.aimT.z)));
   composer.render();
@@ -1712,14 +1908,15 @@ function fpsView() { return state !== 'title' && state !== 'levels'; }
 function placeCamera() {
   const sh = settings.shake ? shake * .02 : 0, fps = fpsView(), fov = fps ? settings.fov * lerp(1, CONFIG.weapons[player.weapon].zoom || CONFIG.move.adsMul, player.adsT) : CAM.fov;
   if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
-  let sx;
+  let sx, sz = 0;
   if (fps) {
     const p = player, d = p.alive ? 0 : Math.min(1, p.deadT * 1.6), bob = p.alive && p.moving ? Math.abs(Math.sin(p.phase)) * .04 : 0;
     const y = lerp(EYE_H * p.s + bob, .28, d), pt = p.pitch + p.kick;
     camera.position.set(p.x + rnd(-sh, sh) * .3, y + rnd(-sh, sh) * .3, p.z + rnd(-sh, sh) * .3);
     camera.lookAt(p.x + Math.cos(p.heading) * Math.cos(pt), y + Math.sin(pt), p.z + Math.sin(p.heading) * Math.cos(pt));
     if (d > 0) camera.rotateZ(d * .9); // fall over when dead
-    sx = p.x + Math.cos(p.heading) * 8;
+    else if (p.roll) camera.rotateZ(-p.roll); // lean into strafes
+    sx = p.x + Math.cos(p.heading) * 8; sz = p.z + Math.sin(p.heading) * 8;
   } else {
     camera.position.set(cam.x - 4 + cam.kx + rnd(-sh, sh), CAM.y + rnd(-sh, sh), CAM.z);
     camera.lookAt(cam.x + 6, CAM.lookY, CAM.lookZ);
@@ -1727,7 +1924,7 @@ function placeCamera() {
   }
   camera.updateMatrixWorld();
   sky.position.copy(camera.position); stars.position.copy(camera.position); flare.position.copy(camera.position).addScaledVector(SUN_DIR, 120);
-  sun.position.set(sx + SUN_DIR.x * 30, SUN_DIR.y * 30, SUN_DIR.z * 30); sun.target.position.set(sx, 0, 0); sun.target.updateMatrixWorld();
+  sun.position.set(sx + SUN_DIR.x * 60, SUN_DIR.y * 60, sz + SUN_DIR.z * 60); sun.target.position.set(sx, 0, sz); sun.target.updateMatrixWorld();
 }
 
 // ================= HUD / MENUS =================
@@ -1785,12 +1982,12 @@ function button(c, x, y, w, h, label, fn, opts = {}) {
 function drawMinimap(c, x, y, w, h) {
   panel(c, x, y, w, h, 'rgba(0,0,0,.5)');
   const sx = w / WORLD_L, gy = z => y + 1 + (clamp(z, Z_MIN, Z_MAX) - Z_MIN) / (Z_MAX - Z_MIN) * (h - 3);
-  c.fillStyle = '#8a8a8a'; for (const d of defenses) c.fillRect(x + d.x * sx, y + 1, 1, h - 2);
+  c.fillStyle = '#8a8a8a'; for (const d of defenses) c.fillRect(x + d.x * sx, gy(d.z - DEF_HALF), 1, Math.max(1, gy(d.z + DEF_HALF) - gy(d.z - DEF_HALF)));
   c.fillStyle = '#f0d040'; for (const d of drops) c.fillRect(x + d.x * sx, gy(d.z), 1, 1);
   for (const z of zombies) {
     if (z.dead) continue;
     const big = z.type === 'brute' ? 2 : 1;
-    c.fillStyle = big > 1 ? '#ff7040' : '#d02020'; c.fillRect(clamp(x + z.x * sx, x, x + w - 2), gy(z.z), big, big);
+    c.fillStyle = big > 1 ? '#ff7040' : z.type === 'gunner' ? '#ffc030' : '#d02020'; c.fillRect(clamp(x + z.x * sx, x, x + w - 2), gy(z.z), big, big);
   }
   if (player.alive) { const px = x + player.x * sx, pz = gy(player.z); c.fillStyle = '#7cff5a'; c.fillRect(px - 1, pz - 1, 2, 2); c.fillStyle = '#c8ffb0'; c.fillRect(px + Math.cos(player.heading) * 3, pz + Math.sin(player.heading) * 2, 1, 1); }
 }
@@ -1890,6 +2087,7 @@ function drawHUD(c) {
     const bar = (x, y, bw, bh) => { c.fillStyle = 'rgba(0,0,0,.6)'; c.fillRect(x - 1, y - 1, bw + 2, bh + 2); c.fillStyle = '#fff'; c.fillRect(x, y, bw, bh); };
     bar(mx - gap - 4, my, 4, 1); bar(mx + gap + 1, my, 4, 1); bar(mx, my - gap - 4, 1, 4); bar(mx, my + gap + 1, 1, 4);
     c.fillStyle = '#fff'; c.fillRect(mx, my, 1, 1);
+    if (!input.touch && !document.pointerLockElement && !input.noLock) text(c, 'CLICK TO CAPTURE THE MOUSE', mx, my + 22, '#fff', 1, 'center', true);
     if (hitMark > 0) { c.fillStyle = hitKill ? '#ff3030' : '#fff'; for (let i = 2; i < 5; i++) { c.fillRect(mx - i, my - i, 1, 1); c.fillRect(mx + i, my - i, 1, 1); c.fillRect(mx - i, my + i, 1, 1); c.fillRect(mx + i, my + i, 1, 1); } }
   }
 }
@@ -2069,7 +2267,7 @@ function selfTest() {
   ok('W walks where you look, D strafes right', Math.abs(fx) < 1e-9 && Math.abs(fz - 1) < 1e-9 && Math.abs(rx) < 1e-9 && Math.abs(rz - 1) < 1e-9);
   state = 'play'; player.x = 12; player.z = 0; player.heading = .7; player.pitch = .2; placeCamera();
   const mz_ = muzzlePoint(player); camera.getWorldDirection(_cd); const ahead = (mz_[0] - camera.position.x) * _cd.x + (mz_[1] - camera.position.y) * _cd.y + (mz_[2] - camera.position.z) * _cd.z;
-  ok('gun muzzle sits just in front of the eye', ahead > .2 && ahead < 1);
+  ok('gun muzzle sits just in front of the eye', ahead > .2 && ahead < 1.3);
   const za = newZombie('walker', 16, 0); za.heading = Math.PI; za.rise = 1.2; zombies = [za];
   const zz2 = newZombie('walker', 16, 0); zz2.heading = Math.PI; poseZombie(zz2);
   const hsS = raySpheres(camera.position.x, 1.2, 0, 1, 0, 0, zz2);
@@ -2078,16 +2276,21 @@ function selfTest() {
   ok('spawning zombie rises out of the ground', y0 < .3 && za.P[1] > y0 + .5);
   const zf = newZombie('walker', player.x + .8, player.z); zf.heading = Math.PI; poseZombie(zf); zombies = [zf]; player.stamina = 100; player.meleeCd = 0; player.heading = 0; const hp0 = zf.hp;
   melee(); ok('shove hurts and knocks back the zombie in front', zf.hp < hp0 && zf.kvx > 2 && player.stamina < 100);
+  { let t = 1; for (let i = 0; i < 120; i++) t = stepTimeScale(t, MIN_TS, STEP); let u = MIN_TS; for (let i = 0; i < 15; i++) u = stepTimeScale(u, 1, STEP);
+    ok('standing still freezes time within 2 s, moving restores it within 0.25 s', t < .02 && u > .9); }
+  { player.x = 50; player.z = 0; player.inv = 0; player.alive = true; const hp0 = player.hp, q = { kind: 'bullet', x: 49.95, y: 1.3, z: .05, vx: 15, vy: 0, vz: 0, t: 0, dmg: 9 };
+    const miss = { kind: 'bullet', x: 49.95, y: 1.3, z: 2, vx: 15, vy: 0, vz: 0, t: 0, dmg: 9 };
+    ok('enemy bullets hit the player in their path and miss beside it', updBullet(q, STEP) && player.hp === hp0 - 9 && !updBullet(miss, STEP)); player.hp = hp0; player.x = 12; }
   player.heading = 0; const sR = spatial(player.x, player.z + 3), sB = spatial(player.x - 4, player.z), sFar = spatial(player.x + 20, player.z), sNear = spatial(player.x + 2, player.z);
   ok('3d sound: right is panned right, behind is muffled, far is quieter', sR.pan > .5 && sB.behind && !sNear.behind && sFar.gain < sNear.gain);
   ok('auto quality only steps down when slow', nextQuality(30, 0) === 1 && nextQuality(60, 1) === 1 && nextQuality(20, 3) === 3);
   ok('music speeds up with intensity', musicBpm(1) > musicBpm(0));
   ok('10% of run earnings is banked', bankShare(95) === 9 && bankShare(0) === 0);
-  const keepObs = obstacles; obstacles = [{ x0: 0, x1: 2, z0: 0, z1: 2, h: 1, kind: 'crate' }];
+  const keepObs = obstacles; obstacles = [{ x0: 0, x1: 2, z0: 0, z1: 2, h: 1, kind: 'crate' }]; indexObstacles();
   const po = { x: 1, z: -.1 }; pushOut(po, .3); const pi = { x: 1.9, z: 1 }; pushOut(pi, .3);
   ok('cover pushes bodies out of it', Math.abs(po.z + .3) < 1e-6 && Math.abs(pi.x - 2.3) < 1e-6);
   ok('bullets stop on cover', Math.abs(rayBoxes(-5, .5, 1, 1, 0, 0) - 5) < 1e-6 && rayBoxes(-5, 1.5, 1, 1, 0, 0) > 1e8);
-  obstacles = keepObs;
+  obstacles = keepObs; indexObstacles();
   const keepObj = { ...objective }; Object.assign(objective, { type: 'hold', meter: 100, x: 22, z: 0 }); wave.phase = 'spawn';
   const zh = newZombie('walker', 22, 0); zombies = [zh]; player.x = 5; updObjective(1);
   ok('radio point drains while zombies hold it alone', objective.meter < 100 && objective.contested && !objective.fail);
@@ -2118,8 +2321,8 @@ addEventListener('resize', resize);
 applyQuality(settings.quality !== 'auto' ? QSET.indexOf(settings.quality) - 1 : matchMedia('(pointer:coarse)').matches ? 1 : 0);
 buildLevel(L);
 player = newPlayer(); player.x = 12; cam.x = 13;
-if (/[?&]test\b/.test(location.search)) { selfTest(); window.__dl = () => ({ heading: player.heading, pitch: player.pitch, kick: player.kick, state, lock: !!document.pointerLockElement, ads: input.ads, adsT: player.adsT, fov: camera.fov, q: qLevel, sun: SUN_DIR.toArray(), flare: flare.visible }); window.__look = (h, p) => { player.heading = h; player.pitch = p; }; } // test-only probe
-for (let i = 0; i < 6; i++) zombies.push(newZombie(pick(['walker', 'walker', 'runner', 'crawler', 'brute']), cam.x + 1.5 + i * 1.6, rnd(Z_MIN, Z_MAX)));
+if (/[?&]test\b/.test(location.search)) { selfTest(); window.__dl = () => ({ heading: player.heading, pitch: player.pitch, kick: player.kick, state, lock: !!document.pointerLockElement, ads: input.ads, adsT: player.adsT, fov: camera.fov, q: qLevel, sun: SUN_DIR.toArray(), flare: flare.visible, ts, models: MODELS.ready, shots: stats.shots, hp: player.hp, zs: zombies.map(z => z.type), bullets: projs.filter(q => q.kind === 'bullet').length, pos: [player.x, player.z], touch: input.touch, dbg: { md: input.mouseDown, fp: input.firePressed, cool: player.cool, rel: player.reloadT, swap: player.swapT, mag: player.mag[player.weapon], w: player.weapon, alive: player.alive, hs: hitStop, nl: input.noLock } }); window.__three = { scene, renderer, composer }; window.__look = (h, p) => { player.heading = h; player.pitch = p; }; window.__spawn = (t, d = 7) => { const z = newZombie(t, player.x + Math.cos(player.heading) * d, player.z + Math.sin(player.heading) * d); z.heading = player.heading + Math.PI; zombies.push(z); }; } // test-only probe
+for (let i = 0; i < 6; i++) zombies.push(newZombie(pick(['walker', 'walker', 'runner', 'crawler', 'brute', 'gunner']), cam.x + 1.5 + i * 1.6, rnd(-3, 2.2)));
 let acc = 0, last = performance.now();
 function loop(now) {
   let d = (now - last) / 1000; last = now; if (d > .25) d = .25;

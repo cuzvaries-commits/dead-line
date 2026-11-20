@@ -5,3 +5,5 @@ Characters: Soldier.glb, Michelle.glb
   Mixamo content may be used inside games; do not redistribute the raw model files on their own.
 Surfaces (PBR, 1k): asphalt_02, concrete_wall_008, rusty_painted_metal, rusty_metal_02, wood_planks_dirt
   Poly Haven (polyhaven.com), CC0. Re-download with: node src3d/fetch-textures.mjs
+Models (glTF, 1k): service_pistol, bolt_action_rifle_7_62, covered_car, barrel_03, wooden_crate_01, ammo_box, medical_box
+  Poly Haven (polyhaven.com), CC0. Re-download with: node src3d/fetch-textures.mjs
