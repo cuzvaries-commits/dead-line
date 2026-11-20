@@ -1,6 +1,6 @@
 DEAD LINE - first person zombie shooter (three.js)
 
-Play online: the GitHub Pages link of this repository (Settings > Pages).
+Play online: https://cuzvaries-commits.github.io/dead-line/
 
 Run locally (needs Node.js 18+ from nodejs.org):
   npm install
